@@ -64,6 +64,7 @@
   <header>
     <h1>Bezwill Control</h1>
     <button class="tab on" id="tabOrders">Orders</button>
+    <button class="tab" id="tabInvoicing">Invoicing</button>
     <button class="tab" id="tabBooks">Waybill books</button>
     <button class="tab" id="tabCustomers">Customers</button>
     <button class="tab" id="tabPricing">Pricing &amp; setup</button>
@@ -81,6 +82,16 @@
         <span class="count" id="ocount"></span>
       </div>
       <div class="card"><table><thead><tr><th>Received</th><th>Order</th><th>Waybill</th><th>Customer</th><th>Collection</th><th>Delivery</th><th>Kg</th><th>Driver</th><th>Status</th><th>Invoice</th></tr></thead><tbody id="obody"></tbody></table></div>
+    </section>
+    <section id="invoicingView" class="hide">
+      <div id="iGate"></div>
+      <div class="bar"><label>Invoice everything collected up to <input type="date" id="iUpTo"></label><button class="btn" id="iGo">Invoice ticked</button><span class="mute" id="iSum"></span></div>
+      <div class="card"><table><thead><tr><th></th><th>Customer</th><th>Date</th><th>Waybills</th><th>Total (incl VAT)</th><th>Notes</th><th></th></tr></thead><tbody id="iBody"></tbody></table></div>
+      <div id="iNot"></div><div id="iMsg"></div>
+      <h3>Invoices</h3>
+      <div class="bar"><button class="btn" id="iDl">Download QuickBooks file (not yet downloaded)</button><button class="btn ghost" id="iDlAll">Download all</button><button class="btn ghost" id="iUndo" style="display:none">Undo last download</button><span class="mute" id="iDlInfo"></span></div>
+      <div class="bar"><input type="text" id="iq" placeholder="Search invoices: number, customer, waybill..."><span class="count" id="icount"></span></div>
+      <div class="card"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody id="invBody"></tbody></table></div>
     </section>
     <section id="booksView" class="hide">
       <div class="bar">
@@ -126,7 +137,7 @@ const SUPABASE_KEY = 'sb_publishable_o8FNrGvKzQ6-SfxStPxpJQ_WsMHLAsv';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let ORDERS = [], CUSTS = [], CBY = {}, TERMS = [], DRIVERS = [], ROLE = null, ALIASES = {}, PRODUCTS = [], BOOKS = [], WBS = [], CURMONTH = '', SHELF = 'on', PERIODS = [], PRICING = [], RULES = [], SETTINGS = [];
+let ORDERS = [], CUSTS = [], CBY = {}, TERMS = [], DRIVERS = [], ROLE = null, ALIASES = {}, PRODUCTS = [], BOOKS = [], WBS = [], CURMONTH = '', SHELF = 'on', PERIODS = [], PRICING = [], RULES = [], SETTINGS = [], INVOICES = [], INVLINES = [];
 
 /* read every row, 1000 at a time (Supabase hands out at most 1000 per request) */
 async function fetchAll(table, order) {
@@ -162,13 +173,13 @@ async function start() {
     $('noRole').classList.add('hide');
     $('obody').innerHTML = '<tr><td colspan="10" class="msg">Loading orders...</td></tr>';
     let SET, AL;
-    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET, PERIODS, PRICING, RULES] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null)]);
+    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET, PERIODS, PRICING, RULES, INVOICES, INVLINES] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true })]);
     SETTINGS = SET;
     ALIASES = {}; AL.forEach(a => ALIASES[a.place] = a.customer_id); CURMONTH = (SET.find(x => x.key === 'CurrentMonth') || {}).value || '';
     $('bnew').classList.toggle('hide', !canEdit());
     $('cnew').classList.toggle('hide', !canEdit()); $('onew').classList.toggle('hide', !canEdit());
     CBY = {}; CUSTS.forEach(c => CBY[c.customer_id] = c);
-    drawOrders(); drawCustomers(); drawShelf(); drawPricing();
+    drawOrders(); drawCustomers(); drawShelf(); drawPricing(); drawInvoicing();
   } catch (e) {
     show('app'); $('obody').innerHTML = '<tr><td colspan="10" class="msg err">Could not load: ' + esc(e.message || e) + '</td></tr>';
   }
@@ -184,6 +195,7 @@ $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('goLogin').c
 $('out').onclick = async () => { await sb.auth.signOut(); ORDERS = []; CUSTS = []; show('login'); };
 
 function tab(which) {
+  $('invoicingView').classList.toggle('hide', which !== 'invoicing'); $('tabInvoicing').classList.toggle('on', which === 'invoicing');
   $('pricingView').classList.toggle('hide', which !== 'pricing'); $('tabPricing').classList.toggle('on', which === 'pricing');
   $('booksView').classList.toggle('hide', which !== 'books'); $('tabBooks').classList.toggle('on', which === 'books');
   $('ordersView').classList.toggle('hide', which !== 'orders');
@@ -191,7 +203,7 @@ function tab(which) {
   $('tabOrders').classList.toggle('on', which === 'orders'); $('tabCustomers').classList.toggle('on', which === 'customers');
   closeDrawer();
 }
-$('tabOrders').onclick = () => tab('orders'); $('tabPricing').onclick = () => tab('pricing'); $('tabBooks').onclick = () => tab('books'); $('tabCustomers').onclick = () => tab('customers');
+$('tabOrders').onclick = () => tab('orders'); $('tabInvoicing').onclick = () => tab('invoicing'); $('tabPricing').onclick = () => tab('pricing'); $('tabBooks').onclick = () => tab('books'); $('tabCustomers').onclick = () => tab('customers');
 
 const fmtDT = s => s ? new Date(s).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'short' }) : '';
 const fmtD = s => s ? String(s).slice(0, 10) : '';
@@ -529,6 +541,256 @@ function driverForm(d) {
   };
   $('drawer').classList.remove('hide');
 }
+
+/* ===== invoice engine: copied from the sheet app (Code.gs) so both give the same invoices ===== */
+function round2_(x) { return Math.round(x * 100) / 100; }
+function pad_(n) { return (n < 10 ? '0' : '') + n; }
+function dmy_(ymd) { return ymd.slice(8, 10) + '/' + ymd.slice(5, 7) + '/' + ymd.slice(0, 4); }
+function ymdAdd_(ymd, days) { var d = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(5, 7) - 1, +ymd.slice(8, 10) + days)); return d.getUTCFullYear() + '-' + pad_(d.getUTCMonth() + 1) + '-' + pad_(d.getUTCDate()); }
+function monthEnd_(ymd) { var d = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(5, 7), 0)); return d.getUTCFullYear() + '-' + pad_(d.getUTCMonth() + 1) + '-' + pad_(d.getUTCDate()); }
+function dueDate_(ymd, t) { var d = t.eom ? monthEnd_(ymd) : ymd; return t.days ? ymdAdd_(d, t.days) : d; }
+function applyRules_(rules, ctx) {
+  var best = null;
+  rules.forEach(function (r) {
+    if (!r.active || !(r.all || r.customerIds.indexOf(String(ctx.customerId)) >= 0)) return;
+    if (r.productCodes.length && r.productCodes.indexOf(ctx.productCode) < 0) return;
+    var w = Number(ctx.weightKg);
+    if (r.minKg !== '' || r.maxKg !== '') { if (ctx.weightKg === '' || ctx.weightKg == null || isNaN(w)) return; }
+    if (r.minKg !== '' && !(w >= r.minKg)) return;
+    if (r.maxKg !== '' && !(w < r.maxKg)) return;
+    if (!best || r.pct > best.pct) best = r;
+  });
+  var f = best ? (1 - best.pct / 100) : 1;
+  return { price: ctx.price === '' ? '' : round2_(ctx.price * f), perKg: ctx.perKg === '' ? '' : round2_(ctx.perKg * f), ruleId: best ? best.id : '', ruleName: best ? best.name : '', pct: best ? best.pct : 0 };
+}
+function tierPct_(kg, tiers) { var p = 0; (tiers || volTiers_()).forEach(function (t) { if (kg > t.over) p = t.pct; }); return p; }
+function volumeTierOk_(rules, custId) {
+  var vol = (rules || []).filter(function (r) { return r.active && /volume/i.test(String(r.name)); });
+  if (!vol.length) return true;
+  var id = String(custId);
+  return vol.some(function (r) { return (r.all || r.customerIds.indexOf(id) >= 0) && (!r.productCodes.length || r.productCodes.indexOf('Courier Imp') >= 0 || r.productCodes.some(function (c) { return /courier/i.test(c); })); });
+}
+function orderPlaceText_(o) { return o.whoPays === 'Sender' ? 'Delivery to ' + (o.delivery || '?') : 'Collection at ' + (o.collection || '?'); }
+function cashLines_(cfg, o, text, wb, rulePct, add) {
+  var bB, bL;
+  if (o.sameDay) { bB = cfg.base.sameDay; bL = cfg.base.sameDayLevy; } else { bB = cfg.base.courier; bL = cfg.base.levy; }
+  var over = o.sameDay ? 0 : Math.max(0, Math.ceil(Number(o.weight) - 1e-9) - 5);
+  function gross(b) { var g = b.price; if (over > 0) { if (b.perKg === '') throw new Error(b.code + ' has no price per kg over 5 kg.'); g += b.perKg * over; } return round2_(g); }
+  var gB = gross(bB), gL = gross(bL), sIncl = 0;
+  (o.surcharges || []).forEach(function (sc) {
+    var s = null; cfg.surcharges.forEach(function (x) { if (x.code === sc.code) s = x; });
+    if (!s) return;
+    var r = rulePct(s.code, o), amt = round2_(s.price * (1 - r.pct / 100)); sIncl += amt + round2_(amt * s.vat / 100);
+  });
+  var rest = round2_(Number(o.cashPrice) - sIncl);
+  if (rest <= 0) throw new Error('WB' + o.waybill + ': the cash price R' + Number(o.cashPrice).toFixed(2) + ' is not more than its surcharges (R' + sIncl.toFixed(2) + ').');
+  var share = gB / (gB + gL), vb = bB.vat / 100, vl = bL.vat / 100;
+  var T = rest / (share * (1 + vb) + (1 - share) * (1 + vl));
+  var B = round2_(T * share), vatB = round2_(B * vb), L = round2_((rest - B - vatB) / (1 + vl));
+  add(o, bB, text + ' (cash price)', B, bB.vat); add(o, bL, wb + ' Fuel Levy', L, bL.vat);
+}
+function noCharge_(o) { return Number(o.extraDiscount) >= 100; }
+function buildInvoice_(cfg, cust, ymd, orders) {
+  var totalKg = 0; orders.forEach(function (o) { if (!noCharge_(o)) totalKg += Number(o.weight) || 0; });
+  var tierOk = volumeTierOk_(cfg.rules, cust.id), tier = 0, maxTier = 0, lines = [], discount = 0, notes = {};
+  /* Volume discount is PER WAYBILL: each waybill's own whole kg decides its tier (not the invoice total). */
+  function rulePct(code, o) { var r = applyRules_(cfg.rules, { customerId: cust.id, productCode: code, weightKg: o.weight, price: 0, perKg: 0 }); return r; }
+  function add(o, b, desc, amount, vat) { lines.push({ wb: o.waybill, item: b.name, desc: desc, qty: 1, rate: amount, amount: amount, vat: vat, taxCode: vat > 0 ? 'Standard' : 'Zero Rated', tax: round2_(amount * vat / 100) }); }
+  orders.forEach(function (o) {
+    tier = tierOk ? tierPct_(Math.ceil((Number(o.weight) || 0) - 1e-9), cfg.volTiers) : 0; if (tier > maxTier && !noCharge_(o)) maxTier = tier;
+    var xd = Number(o.extraDiscount) > 0 ? Number(o.extraDiscount) : 0, xnote = 'extra discount ' + xd + '%';
+    var addX = function (oo, b, desc, amount, vat) { // an extra % on top of everything else, taken off after the rule / volume discount
+      if (xd > 0) { var cut = round2_(amount * xd / 100); if (cut > 0) { amount = round2_(amount - cut); discount += cut; notes[xnote] = 1; desc += ' (extra discount ' + xd + '%)'; } }
+      add(oo, b, desc, amount, vat);
+    };
+    var wb = 'WB' + o.waybill, text = wb + ' ' + orderPlaceText_(o) + ' - ' + o.parcels + (o.parcels === 1 ? ' x parcel' : ' x parcels') + (o.weight ? ' - ' + o.weight + " Kg's" : '');
+    if (noCharge_(o)) { // zero charge: the lines are still listed so the waybill is accounted for, but at R0
+      (o.sameDay ? [[cfg.base.sameDay, text], [cfg.base.sameDayLevy, wb + ' Fuel Levy']] : [[cfg.base.courier, text], [cfg.base.levy, wb + ' Fuel Levy']]).forEach(function (x) { add(o, x[0], x[1] + ' (no charge)', 0, x[0].vat); });
+      (o.surcharges || []).forEach(function (sc) {
+        var s = null; cfg.surcharges.forEach(function (x) { if (x.code === sc.code) s = x; });
+        if (!s) throw new Error('Surcharge "' + sc.code + '" is not on the price list for ' + ymd + '.');
+        add(o, s, wb + ' ' + (sc.desc || s.name) + ' (no charge)', 0, s.vat);
+      });
+      return;
+    }
+    if (o.cash && Number(o.cashPrice) > 0) { cashLines_(cfg, o, text, wb, rulePct, add); }
+    else if (o.sameDay) {
+      [[cfg.base.sameDay, text], [cfg.base.sameDayLevy, wb + ' Fuel Levy']].forEach(function (x) {
+        var b = x[0], r = x[1] === text ? rulePct(b.code, o) : { pct: 0, ruleName: '' }, amt = round2_(b.price * (1 - r.pct / 100)), dsc = round2_(b.price - amt);
+        if (dsc > 0) { discount += dsc; notes[r.ruleName || 'customer rule'] = 1; }
+        addX(o, b, x[1] + (dsc > 0 ? ' (discount R' + dsc.toFixed(2) + ' applied)' : ''), amt, b.vat);
+      });
+    } else {
+      var over = Math.max(0, Math.ceil(Number(o.weight) - 1e-9) - 5);
+      [[cfg.base.courier, text, true], [cfg.base.levy, wb + ' Fuel Levy', false]].forEach(function (x) {
+        var b = x[0], gross = b.price;
+        if (over > 0) { if (b.perKg === '') throw new Error(b.code + ' has no price per kg over 5 kg.'); gross += b.perKg * over; }
+        gross = round2_(gross);
+        var r = x[2] ? rulePct(b.code, o) : { pct: 0, ruleName: '' }, pct = r.pct, why = r.ruleName; // fuel levy never gets a discount
+        if (x[2] && tier > pct) { pct = tier; why = 'volume ' + tier + '%'; }
+        var amt = round2_(gross * (1 - pct / 100)), dsc = round2_(gross - amt);
+        if (dsc > 0) { discount += dsc; notes[why || 'discount'] = 1; }
+        addX(o, b, x[1] + (dsc > 0 ? ' (discount R' + dsc.toFixed(2) + ' applied)' : ''), amt, b.vat);
+      });
+    }
+    (o.surcharges || []).forEach(function (sc) {
+      var s = null; cfg.surcharges.forEach(function (x) { if (x.code === sc.code) s = x; });
+      if (!s) throw new Error('Surcharge "' + sc.code + '" is not on the price list for ' + ymd + '.');
+      var r = rulePct(s.code, o), amt = round2_(s.price * (1 - r.pct / 100)), dsc = round2_(s.price - amt);
+      if (dsc > 0) { discount += dsc; notes[r.ruleName || 'customer rule'] = 1; }
+      addX(o, s, wb + ' ' + (sc.desc || s.name) + (dsc > 0 ? ' (discount R' + dsc.toFixed(2) + ' applied)' : ''), amt, s.vat);
+    });
+  });
+  var sub = 0, tax = 0; lines.forEach(function (l) { sub += l.amount; tax += l.tax; });
+  var t = cfg.termsFor(cust.terms);
+  return { customerId: cust.id, customer: cust.name, date: ymd, dateTxt: dmy_(ymd), terms: t.name, due: dueDate_(ymd, t), dueTxt: dmy_(dueDate_(ymd, t)),
+    memo: orders.map(function (o) {
+      /* Once Off Client: the invoice goes to a generic account, so the memo also says WHO the client was (the paying party). */
+      var who = /^once[\s-]*off/i.test(String(cust.name || '')) ? String((o.whoPays === 'Sender' ? o.collection : o.delivery) || '').trim() : '';
+      return 'WB' + o.waybill + (who ? ' - ' + who : '');
+    }).join(', '), lines: lines, subtotal: round2_(sub), tax: round2_(tax), total: round2_(sub + tax), totalKg: totalKg, tierPct: maxTier, discount: round2_(discount), discountWhy: Object.keys(notes) };
+}
+/* open waybills of the month that sit below a waybill being invoiced (or already invoiced this month) in the same book */
+function computeGaps_(rows, nums, month) {
+  var inSet = {}, maxByBook = {};
+  nums.forEach(function (n) { inSet[n] = 1; });
+  rows.forEach(function (r) {
+    var n = r.waybill, b = r.book_start, invoicedNow = r.status === 'Invoiced' && r.billing_month === month;
+    if (inSet[n] || invoicedNow) { if (!(b in maxByBook) || n > maxByBook[b]) maxByBook[b] = n; }
+  });
+  var gaps = [];
+  rows.forEach(function (r) { if (r.status === 'Open' && r.billing_month === month && !inSet[r.waybill] && (r.book_start in maxByBook) && r.waybill < maxByBook[r.book_start]) gaps.push(r.waybill); });
+  return gaps.sort(function (a, b) { return a - b; });
+}
+
+/* ---------- invoicing ---------- */
+const ymdAdd = ymdAdd_;
+function termsFor(name) {
+  const n = String(name || '').replace(/\s+/g, ' ').trim().toLowerCase(), hit = TERMS.find(t => String(t.terms).trim().toLowerCase() === n);
+  return hit ? { name: String(hit.terms).trim(), days: Number(hit.days) || 0, eom: !!hit.from_month_end } : { name: 'Due on receipt', days: 0, eom: false };
+}
+function volTiers() { return String(setting('VolumeTiers', '149:10,299:20,499:30,749:35')).split(',').map(x => { const a = x.split(':'); return { over: Number(a[0]), pct: Number(a[1]) }; }).filter(t => t.over >= 0 && t.pct > 0).sort((a, b) => a.over - b.over); }
+function volTiers_() { return volTiers(); }
+function ruleViews() { return RULES.filter(r => r.active).map(r => ({ id: r.rule_id, name: r.name, all: !!r.all_customers, customerIds: r.all_customers ? [] : (r.customer_ids || []), productCodes: r.product_codes || [], minKg: r.min_kg == null ? '' : Number(r.min_kg), maxKg: r.max_kg == null ? '' : Number(r.max_kg), pct: Number(r.discount_pct) || 0, active: true })); }
+function cfgFor(date) {
+  let use = null; PERIODS.slice().sort((a, b) => String(a.effective_from) < String(b.effective_from) ? -1 : 1).forEach(p => { if (String(p.effective_from).slice(0, 10) <= date && p.confirmed && PRICING.some(x => x.period_id === p.period_id)) use = p; });
+  if (!use) throw new Error('No pricing found for ' + date);
+  const pmap = {}; PRODUCTS.forEach(p => pmap[p.product_code] = p);
+  const items = PRICING.filter(x => x.period_id === use.period_id).map(x => { const pr = pmap[x.product_code] || { name: x.product_code, vat_rate: 15, role: '', over_code: '', over_name: '' }; return { code: x.product_code, name: pr.name, vatRate: pr.vat_rate, price: x.price === null ? '' : Number(x.price), perKg: x.per_kg == null ? '' : Number(x.per_kg), overName: pr.over_name || '', role: pr.role || '' }; });
+  const byRole = {}, sur = [];
+  items.forEach(i => { if (i.role && !byRole[i.role]) byRole[i.role] = i; const pr = pmap[i.code]; if (!i.role && /^surcharge/i.test(i.code) && i.price !== '' && !(pr && pr.active === false)) sur.push({ code: i.code, name: i.name, price: i.price, vat: Number(i.vatRate) || 0 }); });
+  const pick = (role, label) => { const i = byRole[role]; if (!i || i.price === '') throw new Error('The price list has no ' + label + ' price (product role "' + role + '"). Check Pricing & setup.'); return { code: i.code, name: i.name, vat: Number(i.vatRate) || 0, price: i.price, perKg: i.perKg, overName: i.overName || (i.code + ' per kg over 5 kg') }; };
+  return { date, periodId: use.period_id, base: { courier: pick('Courier', 'Courier Imp'), levy: pick('FuelLevy', 'Fuel Levy Imp'), sameDay: pick('SameDay', 'Same Day Basic'), sameDayLevy: pick('SameDayLevy', 'Same Day Fuel') }, surcharges: sur, volTiers: volTiers(), rules: ruleViews(), termsFor };
+}
+const recvDay = r => r ? new Date(r).toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' }) : '';
+function orderView(o) {
+  return { id: o.order_id, waybill: o.waybill == null ? '' : Number(o.waybill), weight: o.weight_kg == null ? '' : Number(o.weight_kg), parcels: o.parcels == null ? '' : Number(o.parcels), whoPays: o.who_pays || '', customerId: o.customer_id || '', collection: o.collection || '', delivery: o.delivery || '',
+    sameDay: !!o.same_day, surcharges: Array.isArray(o.surcharges) ? o.surcharges : [], cash: !!o.cash_paid, cashPrice: o.cash_price == null ? '' : Number(o.cash_price), extraDiscount: o.extra_discount == null ? 0 : Number(o.extra_discount), status: o.status, collectionDate: o.collection_date ? String(o.collection_date).slice(0, 10) : recvDay(o.received), invoiceNo: o.invoice_no || '' };
+}
+function custView(c) { return { id: c.customer_id, name: c.name, terms: c.terms || '', perWaybill: !!c.invoice_per_waybill, alwaysCash: !!c.always_cash, active: c.active }; }
+const hasCash = o => o.cash && Number(o.cashPrice) > 0;
+let IGROUPS = [];
+function invoiceGroups(upTo) {
+  const views = ORDERS.map(orderView), custs = {}; CUSTS.forEach(c => custs[c.customer_id] = custView(c));
+  const heads = {}; INVOICES.forEach(h => heads[h.invoice_no] = h);
+  const live = views.filter(o => o.status !== 'Cancelled' && o.status !== 'Invoiced');
+  const ready = live.filter(o => o.status === 'Weighed' && o.whoPays && o.customerId && custs[o.customerId] && o.collectionDate <= upTo).sort((x, y) => x.collectionDate < y.collectionDate ? -1 : x.collectionDate > y.collectionDate ? 1 : x.waybill - y.waybill);
+  const notReady = live.filter(o => o.status !== 'Weighed' && o.collectionDate <= upTo).sort((x, y) => x.collectionDate < y.collectionDate ? -1 : x.collectionDate > y.collectionDate ? 1 : (x.waybill || 0) - (y.waybill || 0)).map(o => {
+    const miss = []; if (o.waybill === '') miss.push('waybill'); if (o.parcels === '') miss.push('parcels'); if (!o.weight && !hasCash(o)) miss.push('weight'); if (!o.customerId) miss.push('client'); else if (!o.whoPays) miss.push('who pays'); return Object.assign({}, o, { missing: miss.length ? miss : ['check order'] }); });
+  const by = {}, order = [];
+  ready.forEach(o => { const c = custs[o.customerId], key = c.perWaybill ? o.id : o.customerId + '|' + o.collectionDate; if (!by[key]) { by[key] = { key, orders: [] }; order.push(by[key]); } by[key].orders.push(o); });
+  const groups = order.map(b => {
+    const first = b.orders[0], c = custs[first.customerId], g = { key: b.key, cust: c, date: first.collectionDate, ready: b.orders, existing: null, error: '', warn: [] };
+    if (!c.perWaybill) { // an invoice for the same client and day that has not been downloaded yet: the new waybills are added to it
+      let open = null; const seen = {};
+      views.forEach(o => { if (o.customerId !== first.customerId || o.collectionDate !== first.collectionDate || o.status !== 'Invoiced' || !o.invoiceNo || seen[o.invoiceNo]) return; seen[o.invoiceNo] = 1; const h = heads[o.invoiceNo];
+        if (h && !h.void && !h.exported_at) { if (!open || o.invoiceNo > open.number) open = { number: o.invoiceNo }; } else g.warn.push('Already invoiced and downloaded: ' + o.invoiceNo); });
+      if (open) { open.orders = views.filter(o => o.status === 'Invoiced' && o.invoiceNo === open.number).sort((x, y) => x.waybill - y.waybill); g.existing = open; }
+      const waiting = live.filter(o => o.customerId === first.customerId && o.collectionDate === first.collectionDate && o.status !== 'Weighed'); if (waiting.length) g.warn.push('Not ready yet, same client and day: ' + waiting.map(o => o.waybill || o.id).join(', '));
+    }
+    if (c.alwaysCash) { const need = b.orders.filter(o => !noCharge_(o) && !hasCash(o)); if (need.length) g.error = 'This client has Special Pricing Overrides. Enter the cash price on waybill ' + need.map(o => o.waybill).join(', ') + ' first (Orders tab).'; }
+    if (!g.error) { try { g.inv = buildInvoice_(cfgFor(g.date), c, g.date, g.existing ? g.existing.orders.concat(b.orders) : b.orders); } catch (e) { g.error = e.message; } }
+    g.nums = b.orders.map(o => o.waybill);
+    return g;
+  });
+  return { groups, notReady };
+}
+function drawInvoicing() {
+  const st = pricingState();
+  $('iGate').innerHTML = st.due ? '<div class="card" style="padding:12px;margin-bottom:12px;border-color:var(--warn);background:#fff8ea"><b>Invoicing is blocked.</b> The new fuel price for ' + esc(dlabel(st.periodId)) + ' has not been entered. Go to <b>Pricing &amp; setup</b> first.</div>' : '';
+  if (!$('iUpTo').value) $('iUpTo').value = todayJ();
+  const upTo = $('iUpTo').value, r = invoiceGroups(upTo); IGROUPS = r.groups;
+  let tot = 0; r.groups.forEach(g => { if (!g.error) tot += g.inv.total; });
+  $('iSum').textContent = r.groups.length + ' invoice(s) ready, R' + r2(tot).toFixed(2) + ' in total';
+  $('iBody').innerHTML = r.groups.length ? r.groups.map((g, i) => '<tr><td><input type="checkbox" class="ig" data-i="' + i + '"' + (g.error || st.due ? ' disabled' : ' checked') + '></td><td>' + esc(g.cust.name) + '</td><td>' + esc(dmy_(g.date)) + '</td><td>' + esc(g.nums.join(', ')) + '</td><td>' + (g.error ? '' : 'R' + g.inv.total.toFixed(2)) + '</td><td>' + (g.existing ? '<span class="pill Weighed">adds to ' + esc(g.existing.number) + '</span> ' : '') + (g.error ? '<span class="err">' + esc(g.error) + '</span>' : '') + g.warn.map(w => '<div class="mute" style="font-size:12px">' + esc(w) + '</div>').join('') + '</td><td>' + (g.error ? '' : '<button class="tab ip" data-i="' + i + '">Preview</button>') + '</td></tr>').join('') : '<tr><td colspan="7" class="msg">Nothing is ready to invoice up to this date.</td></tr>';
+  $('iNot').innerHTML = r.notReady.length ? '<details style="margin:10px 0"><summary class="mute">' + r.notReady.length + ' order(s) are not ready yet (missing details)</summary><div class="card"><table><thead><tr><th>Date</th><th>Order</th><th>Waybill</th><th>Customer</th><th>Missing</th></tr></thead><tbody>' + r.notReady.map(o => '<tr><td>' + esc(dmy_(o.collectionDate)) + '</td><td>' + esc(o.id) + '</td><td>' + esc(o.waybill) + '</td><td>' + esc(custName(o.customerId)) + '</td><td>' + esc(o.missing.join(', ')) + '</td></tr>').join('') + '</tbody></table></div></details>' : '';
+  drawInvList();
+}
+function invTotals() { const t = {}; INVLINES.forEach(l => t[l.invoice_no] = (t[l.invoice_no] || 0) + Number(l.amount) + Number(l.tax_amount)); return t; }
+function drawInvList() {
+  const tt = invTotals(), q = $('iq').value.trim().toLowerCase(), heads = INVOICES.slice().reverse().filter(h => !q || [h.invoice_no, h.customer, h.memo].join(' ').toLowerCase().includes(q));
+  const n = INVOICES.filter(h => !h.void && !h.exported_at).length; $('iDl').textContent = 'Download QuickBooks file (' + n + ' not yet downloaded)'; $('iDl').disabled = !n;
+  $('icount').textContent = heads.length + ' of ' + INVOICES.length;
+  $('invBody').innerHTML = heads.slice(0, 300).map(h => '<tr><td>' + esc(h.invoice_no) + '</td><td>' + esc(h.customer) + '<div class="mute" style="font-size:12px">' + esc(h.memo) + '</div></td><td>' + esc(dmy_(String(h.invoice_date).slice(0, 10))) + '</td><td>R' + r2(tt[h.invoice_no] || 0).toFixed(2) + '</td><td>' + (h.void ? '<span class="pill Cancelled">Void</span>' : h.exported_at ? '<span class="pill Invoiced">Downloaded</span>' : '<span class="pill Weighed">To download</span>') + '</td><td>' + (canEdit() && !h.void && !h.exported_at ? '<button class="tab iv" data-n="' + esc(h.invoice_no) + '">Void</button>' : '') + '</td></tr>').join('') || '<tr><td colspan="6" class="msg">No invoices.</td></tr>';
+}
+$('iUpTo').onchange = drawInvoicing; $('iq').oninput = drawInvList;
+async function reloadInvoicing() {
+  [ORDERS, WBS, INVOICES, INVLINES, SETTINGS, BOOKS] = await Promise.all([fetchAll('orders', { col: 'received', asc: false }), fetchAll('waybills', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('settings', null), fetchAll('books', { col: 'book_start', asc: true })]);
+  CURMONTH = (SETTINGS.find(x => x.key === 'CurrentMonth') || {}).value || CURMONTH; drawOrders(); drawShelf(); drawInvoicing();
+}
+function invPayload(g) {
+  const inv = g.inv; return { customer_id: g.cust.id, order_ids: g.ready.map(o => o.id), add_to: g.existing ? g.existing.number : '', invoice_date: g.date, due_date: inv.due, terms: inv.terms, memo: inv.memo, total: inv.total,
+    lines: inv.lines.map(l => ({ item: l.item, desc: l.desc, qty: l.qty, rate: l.rate, amount: l.amount, tax_code: l.taxCode, tax_amount: l.tax })) };
+}
+$('iBody').onclick = e => { const b = e.target.closest('.ip'); if (b) previewInvoice(IGROUPS[Number(b.dataset.i)]); };
+$('iGo').onclick = async () => {
+  const idx = Array.from(document.querySelectorAll('.ig')).filter(c => c.checked).map(c => Number(c.dataset.i)); if (!idx.length) { $('iMsg').innerHTML = '<p class="err">Tick at least one invoice.</p>'; return; }
+  const gaps = await gapInfo(idx.map(i => IGROUPS[i]));
+  if (gaps.length && !confirm('WARNING: these waybill numbers are open but sit below a waybill you are about to invoice (skipped?):\n\n' + gaps.slice(0, 30).join(', ') + (gaps.length > 30 ? ' ...' : '') + '\n\nInvoice them first, unless they really are not to be invoiced.\n\nPress OK to invoice anyway, or Cancel to go back.')) return;
+  await runInvoices(idx.map(i => IGROUPS[i]));
+};
+async function gapInfo(groups) { const nums = []; groups.forEach(g => g.nums.forEach(n => nums.push(n))); return computeGaps_(WBS, nums, CURMONTH); }
+async function runInvoices(groups) {
+  $('iGo').disabled = true; const done = [], bad = [];
+  for (const g of groups) { $('iMsg').innerHTML = '<p class="mute">Invoicing ' + (done.length + bad.length + 1) + ' of ' + groups.length + '...</p>'; const r = await sb.rpc('create_invoice', { p: invPayload(g) }); if (r.error) bad.push(g.cust.name + ' ' + dmy_(g.date) + ': ' + r.error.message); else done.push(r.data.number + ' ' + g.cust.name + ' R' + g.inv.total.toFixed(2)); }
+  $('iGo').disabled = false; await reloadInvoicing();
+  $('iMsg').innerHTML = (done.length ? '<div class="card" style="padding:12px;margin:10px 0"><b>' + done.length + ' invoice(s) created:</b><br>' + done.map(esc).join('<br>') + '</div>' : '') + (bad.length ? '<div class="card" style="padding:12px;margin:10px 0;border-color:var(--bad)"><b class="err">Not done:</b><br>' + bad.map(esc).join('<br>') + '</div>' : '');
+}
+async function previewInvoice(g) {
+  const inv = g.inv, gaps = await gapInfo([g]), st = pricingState();
+  const rows = inv.lines.map(l => '<tr><td>' + esc(l.item) + '</td><td>' + esc(l.desc) + '</td><td>' + l.amount.toFixed(2) + '</td><td>' + l.tax.toFixed(2) + '</td></tr>').join('');
+  $('drawer').style.width = 'min(760px,100%)';
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">' + (g.existing ? 'Add to ' + esc(g.existing.number) : 'New invoice') + ' &ndash; ' + esc(inv.customer) + '</h3><div class="mute">Date ' + esc(inv.dateTxt) + ' &middot; Due ' + esc(inv.dueTxt) + ' &middot; ' + esc(inv.terms) + '<br>' + esc(inv.memo) + '</div>' +
+    '<div class="card" style="margin:10px 0;max-height:50vh"><table><thead><tr><th>Item</th><th>Description</th><th>Amount</th><th>VAT</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+    '<p>Subtotal R' + inv.subtotal.toFixed(2) + ' &middot; VAT R' + inv.tax.toFixed(2) + ' &middot; <b>Total R' + inv.total.toFixed(2) + '</b>' + (inv.discount ? ' &middot; discount R' + inv.discount.toFixed(2) + ' (' + esc(inv.discountWhy.join(', ')) + ')' : '') + '</p>' +
+    (gaps.length ? '<div class="card" style="padding:10px;border-color:var(--warn);background:#fff8ea"><b>Skipped waybill numbers:</b> ' + esc(gaps.slice(0, 30).join(', ')) + (gaps.length > 30 ? ' ...' : '') + '<br>These are open but sit below a waybill on this invoice. Invoice them first, unless they really are not to be invoiced.<label style="display:block;margin-top:8px"><input type="checkbox" id="pv_ok"> I know, invoice anyway</label></div>' : '') +
+    (canEdit() && !st.due ? '<div class="row" style="margin-top:12px"><button class="btn" id="pv_go">Create invoice</button></div>' : '') + '<p id="pv_err" class="err"></p>';
+  if ($('pv_go')) $('pv_go').onclick = async () => { if (gaps.length && !$('pv_ok').checked) { $('pv_err').textContent = 'Tick "I know, invoice anyway" or go and invoice the skipped waybills first.'; return; } $('pv_err').textContent = 'Saving...'; const r = await sb.rpc('create_invoice', { p: invPayload(g) }); if (r.error) { $('pv_err').textContent = r.error.message; return; } closeDrawer(); await reloadInvoicing(); $('iMsg').innerHTML = '<div class="card" style="padding:12px;margin:10px 0"><b>Invoice ' + esc(r.data.number) + ' created</b> for ' + esc(inv.customer) + ', R' + inv.total.toFixed(2) + '.</div>'; };
+  $('drawer').classList.remove('hide');
+}
+$('invBody').onclick = async e => { const b = e.target.closest('.iv'); if (!b) return; const no = b.dataset.n;
+  if (!confirm('Void ' + no + '? Its waybills go back to open and the orders back to "ready". The number is given back, so QuickBooks never sees a gap.')) return;
+  const r = await sb.rpc('void_invoice', { p_no: no }); if (r.error) { $('iMsg').innerHTML = '<p class="err">' + esc(r.error.message) + '</p>'; return; } await reloadInvoicing(); $('iMsg').innerHTML = '<p>Invoice ' + esc(no) + ' voided.</p>'; };
+/* QuickBooks file: the first 16 columns, one row per line; customer, dates, terms and memo only on the invoice's first line */
+const QBO_HEAD = ['*InvoiceNo', '*Customer', '*InvoiceDate', '*DueDate', 'Terms', 'Location', 'Memo', 'Item(Product/Service)', 'ItemDescription', 'ItemQuantity', 'ItemRate', '*ItemAmount', '*ItemTaxCode', 'ItemTaxAmount', 'Service Date', 'Note to customer'];
+const csvCell = v => { v = String(v == null ? '' : v); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+let LASTDL = [];
+function qboRows(all) {
+  const by = {}; INVLINES.forEach(l => (by[l.invoice_no] = by[l.invoice_no] || []).push(l)); const rows = [], nos = [];
+  INVOICES.filter(h => !h.void && (all || !h.exported_at)).forEach(h => { const ls = (by[h.invoice_no] || []).sort((a, b) => a.line_no - b.line_no); if (!ls.length) return; nos.push(h.invoice_no);
+    ls.forEach((l, i) => rows.push([h.invoice_no, i ? '' : h.customer, i ? '' : dmy_(String(h.invoice_date).slice(0, 10)), i ? '' : dmy_(String(h.due_date).slice(0, 10)), i ? '' : (h.terms || ''), i ? '' : (h.location || ''), i ? '' : (h.memo || ''), l.item, l.description || '', l.quantity == null ? '' : String(Number(l.quantity)), Number(l.rate).toFixed(2), Number(l.amount).toFixed(2), l.tax_code, Number(l.tax_amount).toFixed(2), l.service_date ? dmy_(String(l.service_date).slice(0, 10)) : '', i ? '' : (h.note || '')])); });
+  return { rows, nos };
+}
+async function downloadQbo(all) {
+  const x = qboRows(all); if (!x.rows.length) { $('iDlInfo').textContent = 'Nothing to download.'; return; }
+  const csv = [QBO_HEAD].concat(x.rows).map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n', name = 'bezwill_invoices_' + todayJ() + '_' + x.nos[0] + (x.nos.length > 1 ? '-' + x.nos[x.nos.length - 1] : '') + '.csv';
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); a.download = name; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  if (all) { $('iDlInfo').textContent = x.nos.length + ' invoice(s) downloaded (' + name + '). Nothing was marked.'; return; }
+  const r = await sb.rpc('mark_exported', { p_nos: x.nos, p_on: true }); if (r.error) { $('iDlInfo').textContent = 'Downloaded, but could not mark as downloaded: ' + r.error.message; return; }
+  LASTDL = x.nos; $('iUndo').style.display = ''; await reloadInvoicing(); $('iDlInfo').textContent = x.nos.length + ' invoice(s) downloaded (' + name + ') and locked. Import in QuickBooks: Settings > Import data > Invoices.';
+}
+$('iDl').onclick = () => downloadQbo(false); $('iDlAll').onclick = () => downloadQbo(true);
+$('iUndo').onclick = async () => { const r = await sb.rpc('mark_exported', { p_nos: LASTDL, p_on: false }); if (r.error) { $('iDlInfo').textContent = r.error.message; return; } $('iUndo').style.display = 'none'; await reloadInvoicing(); $('iDlInfo').textContent = 'Put back to "to download": ' + LASTDL.join(', '); };
 
 start();
 </script>
