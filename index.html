@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bezwill Orders &amp; Customers</title>
+<title>Bezwill Control</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root { --ink:#1f2933; --mute:#6b7785; --line:#dfe3e8; --bg:#f5f6f8; --brand:#1d5fa8; --ok:#1a7f4b; --warn:#b26a00; --bad:#b42318; }
@@ -37,13 +37,17 @@
   .drawer h3 { margin:0 0 4px; } .drawer dl { display:grid; grid-template-columns:140px 1fr; gap:6px 10px; margin:14px 0; }
   .drawer dt { color:var(--mute); } .drawer dd { margin:0; word-break:break-word; }
   .hide { display:none !important; }
+  .frm label { display:block; margin:10px 0 3px; color:var(--mute); font-size:13px; }
+  .frm input[type=text], .frm select, .frm textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+  .frm .chk label { display:flex; gap:8px; align-items:center; color:var(--ink); font-size:15px; margin:8px 0; }
+  .frm .row { display:flex; gap:8px; margin-top:16px; }
   .count { color:var(--mute); font-size:13px; }
 </style>
 </head>
 <body>
 
 <div id="login" class="hide">
-  <h2>Bezwill sign in</h2>
+  <h2>Bezwill Control</h2>
   <label>Email<input id="em" type="email" autocomplete="username"></label>
   <label>Password<input id="pw" type="password" autocomplete="current-password"></label>
   <button class="btn" id="goLogin" style="width:100%">Sign in</button>
@@ -52,7 +56,7 @@
 
 <div id="app" class="hide">
   <header>
-    <h1>Bezwill</h1>
+    <h1>Bezwill Control</h1>
     <button class="tab on" id="tabOrders">Orders</button>
     <button class="tab" id="tabCustomers">Customers</button>
     <span class="sp"></span>
@@ -73,6 +77,7 @@
       <div class="bar">
         <input type="text" id="cq" placeholder="Search customers: name, number, phone, email...">
         <label><input type="checkbox" id="cact" checked> Active only</label>
+        <button class="btn" id="cnew">+ New customer</button>
         <span class="count" id="ccount"></span>
       </div>
       <div class="card"><table><thead><tr><th>ID</th><th>Name</th><th>Phones</th><th>Email</th><th>Terms</th><th>Flags</th></tr></thead><tbody id="cbody"></tbody></table></div>
@@ -89,7 +94,7 @@ const SUPABASE_KEY = 'sb_publishable_o8FNrGvKzQ6-SfxStPxpJQ_WsMHLAsv';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let ORDERS = [], CUSTS = [], CBY = {};
+let ORDERS = [], CUSTS = [], CBY = {}, TERMS = [], ROLE = null;
 
 /* read every row, 1000 at a time (Supabase hands out at most 1000 per request) */
 async function fetchAll(table, order) {
@@ -116,6 +121,7 @@ async function start() {
   show('boot');
   try {
     const role = await sb.rpc('my_role');
+    ROLE = role.data || null;
     show('app');
     if (role.error || !role.data) {
       $('noRole').textContent = 'You are signed in, but this login has no access yet. Ask the admin to set up your profile.';
@@ -123,7 +129,8 @@ async function start() {
     }
     $('noRole').classList.add('hide');
     $('obody').innerHTML = '<tr><td colspan="10" class="msg">Loading orders...</td></tr>';
-    [CUSTS, ORDERS] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false })]);
+    [CUSTS, ORDERS, TERMS] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null)]);
+    $('cnew').classList.toggle('hide', !canEdit());
     CBY = {}; CUSTS.forEach(c => CBY[c.customer_id] = c);
     drawOrders(); drawCustomers();
   } catch (e) {
@@ -185,10 +192,49 @@ $('cbody').onclick = e => {
   const tr = e.target.closest('tr[data-c]'); if (!tr) return;
   const c = CBY[tr.dataset.c]; if (!c) return;
   const n = ORDERS.filter(o => o.customer_id === c.customer_id).length;
-  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">' + esc(c.name) + '</h3><span class="mute">' + esc(c.customer_id) + '</span>' +
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button> ' + (canEdit() ? '<button class="btn" onclick="editCust(\'' + esc(c.customer_id) + '\')">Edit</button>' : '') + '<h3 style="margin-top:12px">' + esc(c.name) + '</h3><span class="mute">' + esc(c.customer_id) + '</span>' +
     dl([['Full name', c.full_name], ['Phones', c.phones], ['Email', c.email], ['Billing address', c.bill_address], ['Terms', c.terms], ['VAT number', c.vat_number], ['Always cash', c.always_cash ? 'Yes' : ''], ['Invoice per waybill', c.invoice_per_waybill ? 'Yes' : ''], ['Active', c.active ? 'Yes' : 'No'], ['Orders on file', n]]);
   $('drawer').classList.remove('hide');
 };
+
+const canEdit = () => ROLE === 'admin' || ROLE === 'office';
+function nextCustId() {
+  let max = 0; CUSTS.forEach(c => { const m = /^C(\d+)$/.exec(c.customer_id); if (m) max = Math.max(max, Number(m[1])); });
+  return 'C' + String(max + 1).padStart(3, '0');
+}
+function custForm(c) {
+  const isNew = !c; c = c || { active: true, always_cash: false, invoice_per_waybill: false, terms: '' };
+  const f = (id, label, val, area) => '<label for="' + id + '">' + label + '</label>' + (area ? '<textarea id="' + id + '" rows="3">' : '<input type="text" id="' + id + '" value="') + esc(val) + (area ? '</textarea>' : '">');
+  const names = TERMS.map(t => t.terms); if (c.terms && names.indexOf(c.terms) < 0) names.push(c.terms);
+  $('drawer').innerHTML = '<div class="frm"><button class="btn ghost" onclick="closeDrawer()">Cancel</button><h3 style="margin-top:12px">' + (isNew ? 'New customer' : 'Edit ' + esc(c.name)) + '</h3>' +
+    f('f_name', 'Name (as it must appear on invoices)', c.name || '') + f('f_full', 'Full name', c.full_name || '') + f('f_phones', 'Phones', c.phones || '') + f('f_email', 'Email', c.email || '') + f('f_addr', 'Billing address', c.bill_address || '', true) +
+    '<label for="f_terms">Terms</label><select id="f_terms"><option value=""></option>' + names.map(n => '<option' + (n === c.terms ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>' + f('f_vat', 'VAT number', c.vat_number || '') +
+    '<div class="chk"><label><input type="checkbox" id="f_active"' + (c.active ? ' checked' : '') + '> Active</label><label><input type="checkbox" id="f_cash"' + (c.always_cash ? ' checked' : '') + '> Always cash</label><label><input type="checkbox" id="f_pw"' + (c.invoice_per_waybill ? ' checked' : '') + '> Invoice per waybill</label></div>' +
+    '<div class="row"><button class="btn" id="f_save">Save</button></div><p id="f_err" class="err"></p></div>';
+  $('f_save').onclick = () => saveCust(isNew ? null : c.customer_id);
+  $('drawer').classList.remove('hide');
+}
+function editCust(id) { if (CBY[id]) custForm(CBY[id]); }
+$('cnew').onclick = () => custForm(null);
+async function saveCust(id) {
+  const v = k => $(k).value.trim(), nul = s => s === '' ? null : s;
+  const name = v('f_name'), err = m => { $('f_err').textContent = m; };
+  if (!name) return err('Please type the customer name.');
+  const clash = CUSTS.find(c => c.customer_id !== id && c.name.trim().toLowerCase() === name.toLowerCase());
+  if (clash) return err('A customer called "' + clash.name + '" already exists (' + clash.customer_id + ').');
+  const row = { name, full_name: nul(v('f_full')), phones: nul(v('f_phones')), email: nul(v('f_email')), bill_address: nul(v('f_addr')), terms: nul(v('f_terms')), vat_number: nul(v('f_vat')), active: $('f_active').checked, always_cash: $('f_cash').checked, invoice_per_waybill: $('f_pw').checked };
+  $('f_save').disabled = true; err('Saving...');
+  let res;
+  if (id) res = await sb.from('customers').update(row).eq('customer_id', id).select();
+  else { row.customer_id = nextCustId(); res = await sb.from('customers').insert(row).select(); }
+  $('f_save').disabled = false;
+  if (res.error) return err('Could not save: ' + res.error.message);
+  if (!res.data || !res.data.length) return err('Not saved: your login is not allowed to change customers.');
+  const saved = res.data[0];
+  if (id) CUSTS = CUSTS.map(c => c.customer_id === id ? saved : c); else CUSTS.push(saved);
+  CUSTS.sort((a, b) => a.name.localeCompare(b.name)); CBY = {}; CUSTS.forEach(c => CBY[c.customer_id] = c);
+  drawCustomers(); drawOrders(); closeDrawer();
+}
 
 start();
 </script>
