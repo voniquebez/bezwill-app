@@ -203,6 +203,7 @@ async function start() {
   try {
     const role = await sb.rpc('my_role');
     ROLE = role.data || null;
+    try { const pr = await sb.from('profiles').select('can_add_clients').eq('user_id', data.session.user.id).limit(1); CANADD = !!(pr.data && pr.data[0] && pr.data[0].can_add_clients); } catch (e) { CANADD = false; }
     show('app');
     if (role.error || !role.data) {
       $('noRole').textContent = 'You are signed in, but this login has no access yet. Ask the admin to set up your profile.';
@@ -313,7 +314,8 @@ $('cbody').onclick = e => {
 };
 
 const canEdit = () => ROLE === 'admin' || ROLE === 'office';
-const canAddClients = () => { if (!canEdit()) return false; const me = String(($('who') && $('who').textContent) || '').trim().toLowerCase(), list = String((SETTINGS.find(x => x.key === 'NoClientEmails') || {}).value || '').toLowerCase().replace(/\s+/g, '').split(','); return list.indexOf(me) < 0; };
+let CANADD = false;
+const canAddClients = () => canEdit() && CANADD;
 function nextCustId() {
   let max = 0; CUSTS.forEach(c => { const m = /^C(\d+)$/.exec(c.customer_id); if (m) max = Math.max(max, Number(m[1])); });
   return 'C' + String(max + 1).padStart(3, '0');
