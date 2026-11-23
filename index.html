@@ -215,7 +215,7 @@ async function start() {
     SETTINGS = SET;
     ALIASES = {}; AL.forEach(a => ALIASES[a.place] = a.customer_id); CURMONTH = (SET.find(x => x.key === 'CurrentMonth') || {}).value || '';
     $('bnew').classList.toggle('hide', !canEdit());
-    $('cnew').classList.toggle('hide', !canEdit()); $('onew').classList.toggle('hide', !canEdit());
+    $('cnew').classList.toggle('hide', !canAddClients()); $('cmerge').classList.toggle('hide', !canAddClients()); $('onew').classList.toggle('hide', !canEdit());
     CBY = {}; CUSTS.forEach(c => CBY[c.customer_id] = c);
     drawOrders(); drawCustomers(); drawShelf(); drawPricing(); drawInvoicing(); drawCash();
   } catch (e) {
@@ -313,6 +313,7 @@ $('cbody').onclick = e => {
 };
 
 const canEdit = () => ROLE === 'admin' || ROLE === 'office';
+const canAddClients = () => { if (!canEdit()) return false; const me = String(($('who') && $('who').textContent) || '').trim().toLowerCase(), list = String((SETTINGS.find(x => x.key === 'NoClientEmails') || {}).value || '').toLowerCase().replace(/\s+/g, '').split(','); return list.indexOf(me) < 0; };
 function nextCustId() {
   let max = 0; CUSTS.forEach(c => { const m = /^C(\d+)$/.exec(c.customer_id); if (m) max = Math.max(max, Number(m[1])); });
   return 'C' + String(max + 1).padStart(3, '0');
