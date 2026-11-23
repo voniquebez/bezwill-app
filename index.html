@@ -65,6 +65,7 @@
     <h1>Bezwill Control</h1>
     <button class="tab on" id="tabOrders">Orders</button>
     <button class="tab" id="tabInvoicing">Invoicing</button>
+    <button class="tab" id="tabCash">Cash Round</button>
     <button class="tab" id="tabBooks">Waybill books</button>
     <button class="tab" id="tabCustomers">Customers</button>
     <button class="tab" id="tabPricing">Pricing &amp; setup</button>
@@ -87,11 +88,25 @@
       <div id="iGate"></div>
       <div class="bar"><label>Invoice everything collected up to <input type="date" id="iUpTo"></label><button class="btn" id="iGo">Invoice ticked</button><span class="mute" id="iSum"></span></div>
       <div class="card"><table><thead><tr><th></th><th>Customer</th><th>Date</th><th>Waybills</th><th>Total (incl VAT)</th><th>Notes</th><th></th></tr></thead><tbody id="iBody"></tbody></table></div>
-      <div id="iNot"></div><div id="iMsg"></div>
+      <div id="iCash"></div><div id="iNot"></div><div id="iMsg"></div>
       <h3>Invoices</h3>
       <div class="bar"><button class="btn" id="iDl">Download QuickBooks file (not yet downloaded)</button><button class="btn ghost" id="iDlAll">Download all</button><button class="btn ghost" id="iUndo" style="display:none">Undo last download</button><span class="mute" id="iDlInfo"></span></div>
       <div class="bar"><input type="text" id="iq" placeholder="Search invoices: number, customer, waybill..."><span class="count" id="icount"></span></div>
       <div class="card"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody id="invBody"></tbody></table></div>
+    </section>
+    <section id="cashView" class="hide">
+      <div id="cGate"></div>
+      <div class="card" style="padding:14px;max-width:640px"><div class="frm">
+        <label for="c_cust">Client</label><select id="c_cust"></select>
+        <label for="c_w">Weight (kg)</label><input type="text" id="c_w" inputmode="decimal">
+        <div class="chk"><label><input type="checkbox" id="c_sd"> Same Day</label></div>
+        <label>Surcharges</label><div id="c_sur"></div>
+        <label for="c_d">Discount %</label><input type="text" id="c_d" value="0" inputmode="decimal">
+        <label for="c_wb">Waybill number (optional)</label><input type="text" id="c_wb" inputmode="numeric">
+        <div id="c_out" style="margin:10px 0"></div>
+        <div class="row"><button class="btn" id="c_rec">Record cash round</button></div><p id="c_err" class="err"></p>
+      </div></div>
+      <h3>Recent cash rounds</h3><div class="card"><table><thead><tr><th>Round</th><th>When</th><th>Client</th><th>Weight</th><th>Cash</th><th>Waybill</th></tr></thead><tbody id="c_recent"></tbody></table></div>
     </section>
     <section id="booksView" class="hide">
       <div class="bar">
@@ -137,7 +152,7 @@ const SUPABASE_KEY = 'sb_publishable_o8FNrGvKzQ6-SfxStPxpJQ_WsMHLAsv';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let ORDERS = [], CUSTS = [], CBY = {}, TERMS = [], DRIVERS = [], ROLE = null, ALIASES = {}, PRODUCTS = [], BOOKS = [], WBS = [], CURMONTH = '', SHELF = 'on', PERIODS = [], PRICING = [], RULES = [], SETTINGS = [], INVOICES = [], INVLINES = [];
+let ORDERS = [], CUSTS = [], CBY = {}, TERMS = [], DRIVERS = [], ROLE = null, ALIASES = {}, PRODUCTS = [], BOOKS = [], WBS = [], CURMONTH = '', SHELF = 'on', PERIODS = [], PRICING = [], RULES = [], SETTINGS = [], INVOICES = [], INVLINES = [], CASHR = [];
 
 /* read every row, 1000 at a time (Supabase hands out at most 1000 per request) */
 async function fetchAll(table, order) {
@@ -173,13 +188,13 @@ async function start() {
     $('noRole').classList.add('hide');
     $('obody').innerHTML = '<tr><td colspan="10" class="msg">Loading orders...</td></tr>';
     let SET, AL;
-    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET, PERIODS, PRICING, RULES, INVOICES, INVLINES] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true })]);
+    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET, PERIODS, PRICING, RULES, INVOICES, INVLINES, CASHR] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false })]);
     SETTINGS = SET;
     ALIASES = {}; AL.forEach(a => ALIASES[a.place] = a.customer_id); CURMONTH = (SET.find(x => x.key === 'CurrentMonth') || {}).value || '';
     $('bnew').classList.toggle('hide', !canEdit());
     $('cnew').classList.toggle('hide', !canEdit()); $('onew').classList.toggle('hide', !canEdit());
     CBY = {}; CUSTS.forEach(c => CBY[c.customer_id] = c);
-    drawOrders(); drawCustomers(); drawShelf(); drawPricing(); drawInvoicing();
+    drawOrders(); drawCustomers(); drawShelf(); drawPricing(); drawInvoicing(); drawCash();
   } catch (e) {
     show('app'); $('obody').innerHTML = '<tr><td colspan="10" class="msg err">Could not load: ' + esc(e.message || e) + '</td></tr>';
   }
@@ -195,6 +210,7 @@ $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('goLogin').c
 $('out').onclick = async () => { await sb.auth.signOut(); ORDERS = []; CUSTS = []; show('login'); };
 
 function tab(which) {
+  $('cashView').classList.toggle('hide', which !== 'cash'); $('tabCash').classList.toggle('on', which === 'cash');
   $('invoicingView').classList.toggle('hide', which !== 'invoicing'); $('tabInvoicing').classList.toggle('on', which === 'invoicing');
   $('pricingView').classList.toggle('hide', which !== 'pricing'); $('tabPricing').classList.toggle('on', which === 'pricing');
   $('booksView').classList.toggle('hide', which !== 'books'); $('tabBooks').classList.toggle('on', which === 'books');
@@ -203,7 +219,7 @@ function tab(which) {
   $('tabOrders').classList.toggle('on', which === 'orders'); $('tabCustomers').classList.toggle('on', which === 'customers');
   closeDrawer();
 }
-$('tabOrders').onclick = () => tab('orders'); $('tabInvoicing').onclick = () => tab('invoicing'); $('tabPricing').onclick = () => tab('pricing'); $('tabBooks').onclick = () => tab('books'); $('tabCustomers').onclick = () => tab('customers');
+$('tabOrders').onclick = () => tab('orders'); $('tabInvoicing').onclick = () => tab('invoicing'); $('tabCash').onclick = () => tab('cash'); $('tabPricing').onclick = () => tab('pricing'); $('tabBooks').onclick = () => tab('books'); $('tabCustomers').onclick = () => tab('customers');
 
 const fmtDT = s => s ? new Date(s).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'short' }) : '';
 const fmtD = s => s ? String(s).slice(0, 10) : '';
@@ -374,19 +390,35 @@ function openBook(start) {
   const om = {}; ORDERS.forEach(o => { if (o.waybill && o.status !== 'Cancelled') om[o.waybill] = o; });
   const rows = WBS.filter(w => w.book_start === start).sort((x, y) => x.waybill - y.waybill).map(w => {
     const state = w.status === 'Invoiced' ? 'Invoiced' : w.status === 'Cancelled' ? 'Cancelled' : (w.billing_month === CURMONTH ? 'Open' : 'Carried over'), o = om[w.waybill];
-    return '<tr><td>' + w.waybill + '</td><td><span class="pill ' + (state === 'Carried over' ? 'Weighed' : state) + '">' + state + '</span></td><td>' + esc(w.invoice_no) + '</td><td>' + esc(custName(w.customer_id) || (o ? custName(o.customer_id) : '')) + '</td><td>' + (w.cash_paid ? 'Cash' : '') + '</td><td class="mute">' + (o ? esc(o.order_id + ' ' + (o.delivery || '')) : '') + '</td></tr>'; }).join('');
+    return '<tr><td>' + (canEdit() ? '<input type="checkbox" class="wsel" data-w="' + w.waybill + '" data-s="' + state + '"> ' : '') + w.waybill + '</td><td><span class="pill ' + (state === 'Carried over' ? 'Weighed' : state) + '">' + state + '</span></td><td>' + esc(w.invoice_no) + '</td><td>' + esc(custName(w.customer_id) || (o ? custName(o.customer_id) : '')) + '</td><td>' + (w.cash_paid ? 'Cash' : '') + '</td><td class="mute">' + (o ? esc(o.order_id + ' ' + (o.delivery || '')) : '') + '</td></tr>'; }).join('');
   const drv = DRIVERS.filter(d => d.active !== false).map(d => d.name).filter(x => x); if (b.holder && drv.indexOf(b.holder) < 0) drv.push(b.holder);
   $('drawer').style.width = 'min(720px,100%)';
   $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Book ' + b.book_start + ' &ndash; ' + b.book_end + '</h3><div class="mute">' + (b.holder ? 'Out with ' + esc(b.holder) : 'At the office') + '</div>' +
     (canEdit() ? '<div class="frm"><label for="b_h">Who has this book?</label><div style="display:flex;gap:8px"><select id="b_h" style="flex:1"><option value="">At the office</option>' + drv.map(d => '<option' + (d === b.holder ? ' selected' : '') + '>' + esc(d) + '</option>').join('') + '</select><button class="btn" id="b_hs">Save</button></div>' +
       '<label for="b_n">Notes</label><textarea id="b_n" rows="3">' + esc(b.notes || '') + '</textarea><div class="row"><button class="btn ghost" id="b_ns">Save notes</button></div><p id="b_err" class="err"></p></div>' : (b.notes ? '<pre class="mute" style="white-space:pre-wrap">' + esc(b.notes) + '</pre>' : '')) +
-    '<div class="card" style="margin-top:12px;max-height:60vh"><table><thead><tr><th>Waybill</th><th>Status</th><th>Invoice</th><th>Customer</th><th></th><th>Order</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    (canEdit() ? '<div class="bar" style="margin-top:12px;flex-wrap:wrap"><span class="mute">Tick waybills:</span><button class="btn ghost" id="w_cancel">Cancel</button><button class="btn ghost" id="w_uncancel">Un-cancel</button><button class="btn ghost" id="w_next">Carry to next month</button><button class="btn ghost" id="w_back">Bring back</button><button class="btn ghost" id="w_credit">Credit note</button><button class="btn ghost" id="w_book">Carry whole book</button></div><div id="w_form"></div>' : '') + '<div class="card" style="margin-top:12px;max-height:60vh"><table><thead><tr><th>Waybill</th><th>Status</th><th>Invoice</th><th>Customer</th><th></th><th>Order</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   if (canEdit()) {
     const upd = r => { if (r.error) { $('b_err').textContent = r.error.message; return false; } BOOKS = BOOKS.map(x => x.book_start === start ? r.data : x); drawShelf(); return true; };
     $('b_hs').onclick = async () => { $('b_err').textContent = 'Saving...'; if (upd(await sb.rpc('set_holder', { p_start: start, p_holder: $('b_h').value }))) openBook(start); };
+    wbActions(start);
     $('b_ns').onclick = async () => { $('b_err').textContent = 'Saving...'; if (upd(await sb.rpc('save_book_note', { p_start: start, p_note: $('b_n').value }))) $('b_err').textContent = 'Notes saved.'; };
   }
   $('drawer').classList.remove('hide');
+}
+
+function wbSel(state) { return Array.from(document.querySelectorAll('.wsel')).filter(c => c.checked && (!state || c.dataset.s === state)).map(c => Number(c.dataset.w)); }
+async function wbDone(start, msg) { [BOOKS, WBS, SETTINGS] = await Promise.all([fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null)]); CURMONTH = setting('CurrentMonth', CURMONTH); drawShelf(); drawInvoicing(); openBook(start); $('b_err').textContent = msg; $('b_err').className = 'mute'; }
+function wbActions(start) {
+  const form = $('w_form'), err = t => { $('b_err').className = 'err'; $('b_err').textContent = t; };
+  const run = async (fn, args, ok) => { err('Saving...'); const r = await sb.rpc(fn, args); if (r.error) { err(r.error.message); return; } await wbDone(start, ok(r.data)); };
+  const ask = (html, go) => { form.innerHTML = '<div class="frm" style="margin-top:8px">' + html + '<div class="row"><button class="btn" id="w_go">OK</button></div></div>'; $('w_go').onclick = go; };
+  const need = (nums, what) => { if (!nums.length) { err('Tick at least one ' + what + ' waybill first.'); return false; } return true; };
+  $('w_cancel').onclick = () => { const n = wbSel('Open'); if (!need(n, 'open')) return; ask('<label for="w_why">Reason for cancelling ' + n.join(', ') + '</label><input type="text" id="w_why">', () => run('cancel_waybills', { p_nums: n, p_reason: $('w_why').value }, d => d + ' waybill(s) cancelled.')); };
+  $('w_uncancel').onclick = () => { const n = wbSel('Cancelled'); if (!need(n, 'cancelled')) return; ask('<label for="w_why">Reason (optional)</label><input type="text" id="w_why">', () => run('uncancel_waybills', { p_nums: n, p_reason: $('w_why').value }, d => d + ' waybill(s) open again.')); };
+  $('w_next').onclick = () => { const n = wbSel('Open'); if (!need(n, 'open')) return; run('move_waybills', { p_nums: n, p_dir: 'next' }, d => d + ' waybill(s) carried to next month.'); };
+  $('w_back').onclick = () => { const n = wbSel('Carried over'); if (!need(n, 'carried over')) return; run('move_waybills', { p_nums: n, p_dir: 'back' }, d => d + ' waybill(s) brought back to this month.'); };
+  $('w_credit').onclick = () => { const n = wbSel('Invoiced'); if (n.length !== 1) { err('Tick exactly one invoiced waybill for a credit note.'); return; } ask('<label for="w_cn">Credit note number for ' + n[0] + '</label><input type="text" id="w_cn"><label for="w_ni">New invoice number (if one was issued)</label><input type="text" id="w_ni">', () => run('add_credit', { p_waybill: n[0], p_credit_note: $('w_cn').value, p_new_invoice: $('w_ni').value || null }, () => 'Credit note saved.')); };
+  $('w_book').onclick = () => ask('<label><input type="checkbox" id="w_ok"> Carry every open waybill in this book to next month (invoiced ones stay)</label>', () => { if (!$('w_ok').checked) { err('Tick the box first.'); return; } run('carry_book', { p_start: start }, d => d + ' waybill(s) carried to next month.'); });
 }
 $('bnew').onclick = () => {
   const last = BOOKS.reduce((m, b) => Math.max(m, b.book_end), 0), drv = DRIVERS.filter(d => d.active !== false).map(d => d.name).filter(x => x);
@@ -689,6 +721,74 @@ function orderView(o) {
 }
 function custView(c) { return { id: c.customer_id, name: c.name, terms: c.terms || '', perWaybill: !!c.invoice_per_waybill, alwaysCash: !!c.always_cash, active: c.active }; }
 const hasCash = o => o.cash && Number(o.cashPrice) > 0;
+function cashCalc_(cfg, inp) {
+  var d = Number(inp.discountPct || 0), cid = String(inp.customerId || ''), lines = [];
+  if (isNaN(d) || d < 0 || d > 100) throw new Error('Discount % must be between 0 and 100.');
+  /* Cash rounds get the invoice-level VOLUME discount (courier line only, by whole kg) automatically - even with no customer chosen -
+     but never the customer / loyalty pricing rules. A client excluded from the Loyalty Volume rules gets no volume discount. */
+  function add(label, qty, excl, vat, base) { lines.push({ label: label, qty: qty, incl: round2_(excl * (1 + vat / 100)), base: base }); }
+  function disc(x, dd) { return x * (1 - dd / 100); }
+  var volPct = 0;
+  if (inp.sameDay) {
+    [cfg.base.sameDay, cfg.base.sameDayLevy].forEach(function (b) { add(b.name, '', disc(b.price, d), b.vat, true); });
+  } else {
+    var w = Number(inp.weight);
+    if (!(w > 0)) throw new Error('Enter the weight in kg.');
+    var kg = Math.ceil(w - 1e-9), over = Math.max(0, kg - 5);
+    volPct = (!cid || volumeTierOk_(cfg.rules, cid)) ? tierPct_(kg, cfg.volTiers) : 0;
+    var useVol = volPct > d;
+    [cfg.base.courier, cfg.base.levy].forEach(function (b, i) {
+      var dd = (i === 0 && useVol) ? 0 : d;
+      add(b.name + ' (up to 5 kg)', '', disc(b.price, dd), b.vat, true);
+      if (over > 0) {
+        if (b.perKg === '') throw new Error(b.code + ' has no price per kg over 5 kg.');
+        add(b.overName, over + ' kg x R' + round2_(disc(b.perKg, dd)).toFixed(2), disc(b.perKg, dd) * over, b.vat, true);
+      }
+      if (i === 0 && useVol) {
+        var gross = round2_(b.price + (over > 0 ? b.perKg * over : 0)), cut = round2_(gross - round2_(gross * (1 - volPct / 100)));
+        lines.push({ label: 'Volume discount ' + volPct + '% (' + kg + ' kg)', qty: '', incl: -round2_(cut * (1 + b.vat / 100)), base: true, volume: true });
+      }
+    });
+    if (!useVol) volPct = 0;
+  }
+  (inp.surcharges || []).forEach(function (code) {
+    var s = null; cfg.surcharges.forEach(function (x) { if (x.code === code) s = x; });
+    if (!s) throw new Error('Unknown surcharge: ' + code);
+    add(s.name, '', s.price, s.vat, false);
+  });
+  var total = 0; lines.forEach(function (l) { total += l.incl; });
+  total = round2_(total);
+  return { lines: lines, calculated: total, cash: Math.round(total), rules: [], volumePct: volPct };
+}
+function cashCfgNow() { return cfgFor(todayJ()); }
+function drawCash() {
+  const st = pricingState(); $('cGate').innerHTML = st.due ? '<div class="card" style="padding:12px;margin-bottom:12px;border-color:var(--warn);background:#fff8ea"><b>Cash Round is blocked.</b> The new fuel price has not been entered. Go to <b>Pricing &amp; setup</b> first.</div>' : '';
+  const keep = $('c_cust').value; $('c_cust').innerHTML = '<option value="">Choose a client</option>' + CUSTS.filter(c => c.active).slice().sort((a, b) => a.name.localeCompare(b.name)).map(c => '<option value="' + esc(c.customer_id) + '"' + (c.customer_id === keep ? ' selected' : '') + '>' + esc(c.name) + '</option>').join('');
+  let cfg = null; try { cfg = cashCfgNow(); } catch (e) { $('c_out').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+  const sel = Array.from(document.querySelectorAll('.csur')).filter(c => c.checked).map(c => c.value);
+  if (cfg) $('c_sur').innerHTML = cfg.surcharges.map(x => '<label style="display:block"><input type="checkbox" class="csur" value="' + esc(x.code) + '"' + (sel.indexOf(x.code) >= 0 ? ' checked' : '') + '> ' + esc(x.name) + ' (R' + Number(x.price).toFixed(2) + ' + VAT)</label>').join('') || '<span class="mute">None</span>';
+  $('c_recent').innerHTML = CASHR.slice(0, 15).map(r => '<tr><td>' + esc(r.round_id) + '</td><td>' + esc(fmtDT(r.recorded_at)) + '</td><td>' + esc(r.customer_name) + '</td><td>' + (r.same_day ? 'Same Day' : esc(r.weight_kg == null ? '' : r.weight_kg)) + '</td><td>R' + Number(r.cash_price).toFixed(0) + '</td><td>' + esc(r.waybill || '') + '</td></tr>').join('') || '<tr><td colspan="6" class="msg">No cash rounds yet.</td></tr>';
+  cashQuote();
+}
+let CQ = null;
+function cashQuote() {
+  CQ = null; let cfg; try { cfg = cashCfgNow(); } catch (e) { return; }
+  const w = $('c_w').value.replace(',', '.').trim(), sd = $('c_sd').checked;
+  if (!sd && !w) { $('c_out').innerHTML = '<span class="mute">Enter the weight, or tick Same Day.</span>'; return; }
+  try {
+    const r = cashCalc_(cfg, { weight: w, sameDay: sd, surcharges: Array.from(document.querySelectorAll('.csur')).filter(c => c.checked).map(c => c.value), discountPct: $('c_d').value.replace(',', '.'), customerId: $('c_cust').value });
+    CQ = { r, cfg }; $('c_out').innerHTML = '<table><tbody>' + r.lines.map(l => '<tr><td>' + esc(l.label) + (l.qty ? ' <span class="mute">' + esc(l.qty) + '</span>' : '') + '</td><td style="text-align:right">' + l.incl.toFixed(2) + '</td></tr>').join('') + '</tbody></table><p style="font-size:22px;margin:8px 0"><b>Cash price: R' + r.cash + '</b> <span class="mute" style="font-size:13px">(R' + r.calculated.toFixed(2) + ' incl VAT, rounded)</span></p>';
+  } catch (e) { $('c_out').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
+}
+['c_cust', 'c_w', 'c_sd', 'c_d'].forEach(id => { $(id).oninput = cashQuote; $(id).onchange = cashQuote; });
+$('c_sur').onchange = cashQuote;
+$('c_rec').onclick = async () => {
+  cashQuote(); if (!CQ) { $('c_err').textContent = 'Fill in the weight (or Same Day) first.'; return; } if (!$('c_cust').value) { $('c_err').textContent = 'Choose a client.'; return; }
+  $('c_err').className = 'err'; $('c_err').textContent = 'Saving...'; const r = CQ.r, sd = $('c_sd').checked;
+  const res = await sb.rpc('record_cash_round', { p: { customer_id: $('c_cust').value, weight_kg: sd ? null : $('c_w').value.replace(',', '.'), same_day: sd, surcharges: Array.from(document.querySelectorAll('.csur')).filter(c => c.checked).map(c => c.value), discount_pct: $('c_d').value.replace(',', '.') || 0, calculated: r.calculated, cash_price: r.cash, price_list: CQ.cfg.periodId, waybill: $('c_wb').value.replace(/\s+/g, '') } });
+  if (res.error) { $('c_err').textContent = res.error.message; return; }
+  $('c_w').value = ''; $('c_sd').checked = false; $('c_wb').value = ''; $('c_err').className = 'mute'; await reloadInvoicing(); $('c_err').textContent = 'Recorded ' + res.data.id + ': R' + res.data.cash + (res.data.linked ? ' (tied to order ' + res.data.linked + ')' : '') + '.';
+};
 let IGROUPS = [];
 function invoiceGroups(upTo) {
   const views = ORDERS.map(orderView), custs = {}; CUSTS.forEach(c => custs[c.customer_id] = custView(c));
@@ -708,7 +808,7 @@ function invoiceGroups(upTo) {
       if (open) { open.orders = views.filter(o => o.status === 'Invoiced' && o.invoiceNo === open.number).sort((x, y) => x.waybill - y.waybill); g.existing = open; }
       const waiting = live.filter(o => o.customerId === first.customerId && o.collectionDate === first.collectionDate && o.status !== 'Weighed'); if (waiting.length) g.warn.push('Not ready yet, same client and day: ' + waiting.map(o => o.waybill || o.id).join(', '));
     }
-    if (c.alwaysCash) { const need = b.orders.filter(o => !noCharge_(o) && !hasCash(o)); if (need.length) g.error = 'This client has Special Pricing Overrides. Enter the cash price on waybill ' + need.map(o => o.waybill).join(', ') + ' first (Orders tab).'; }
+    if (c.alwaysCash) { const need = b.orders.filter(o => !noCharge_(o) && !hasCash(o)); if (need.length) { g.needCash = need; g.error = 'Special Pricing Overrides: enter the cash price (incl VAT) for each waybill:'; } }
     if (!g.error) { try { g.inv = buildInvoice_(cfgFor(g.date), c, g.date, g.existing ? g.existing.orders.concat(b.orders) : b.orders); } catch (e) { g.error = e.message; } }
     g.nums = b.orders.map(o => o.waybill);
     return g;
@@ -722,7 +822,10 @@ function drawInvoicing() {
   const upTo = $('iUpTo').value, r = invoiceGroups(upTo); IGROUPS = r.groups;
   let tot = 0; r.groups.forEach(g => { if (!g.error) tot += g.inv.total; });
   $('iSum').textContent = r.groups.length + ' invoice(s) ready, R' + r2(tot).toFixed(2) + ' in total';
-  $('iBody').innerHTML = r.groups.length ? r.groups.map((g, i) => '<tr><td><input type="checkbox" class="ig" data-i="' + i + '"' + (g.error || st.due ? ' disabled' : ' checked') + '></td><td>' + esc(g.cust.name) + '</td><td>' + esc(dmy_(g.date)) + '</td><td>' + esc(g.nums.join(', ')) + '</td><td>' + (g.error ? '' : 'R' + g.inv.total.toFixed(2)) + '</td><td>' + (g.existing ? '<span class="pill Weighed">adds to ' + esc(g.existing.number) + '</span> ' : '') + (g.error ? '<span class="err">' + esc(g.error) + '</span>' : '') + g.warn.map(w => '<div class="mute" style="font-size:12px">' + esc(w) + '</div>').join('') + '</td><td>' + (g.error ? '' : '<button class="tab ip" data-i="' + i + '">Preview</button>') + '</td></tr>').join('') : '<tr><td colspan="7" class="msg">Nothing is ready to invoice up to this date.</td></tr>';
+  $('iBody').innerHTML = r.groups.length ? r.groups.map((g, i) => '<tr><td><input type="checkbox" class="ig" data-i="' + i + '"' + (g.error || st.due ? ' disabled' : ' checked') + '></td><td>' + esc(g.cust.name) + '</td><td>' + esc(dmy_(g.date)) + '</td><td>' + esc(g.nums.join(', ')) + '</td><td>' + (g.error ? '' : 'R' + g.inv.total.toFixed(2)) + '</td><td>' + (g.existing ? '<span class="pill Weighed">adds to ' + esc(g.existing.number) + '</span> ' : '') + (g.error ? '<span class="err">' + esc(g.error) + '</span>' : '') + (g.needCash ? '<div>' + g.needCash.map(o => '<div style="margin:4px 0">' + esc(o.waybill) + ' <input type="text" class="cp" data-o="' + esc(o.id) + '" size="8" inputmode="decimal" placeholder="R"></div>').join('') + '<button class="tab cps">Save cash prices</button></div>' : '') + g.warn.map(w => '<div class="mute" style="font-size:12px">' + esc(w) + '</div>').join('') + '</td><td>' + (g.error ? '' : '<button class="tab ip" data-i="' + i + '">Preview</button>') + '</td></tr>').join('') : '<tr><td colspan="7" class="msg">Nothing is ready to invoice up to this date.</td></tr>';
+  const span = Math.max(0, Number(setting('CashMatchDays', '1')) || 0), cm = [];
+  r.groups.forEach(g => g.ready.forEach(o => { if (hasCash(o)) return; const c = CASHR.filter(x => !x.waybill && x.customer_id === o.customerId && Math.abs(Math.round((new Date(recvDay(x.recorded_at) + 'T00:00:00Z') - new Date(o.collectionDate + 'T00:00:00Z')) / 86400000)) <= span); if (c.length) cm.push({ o, c }); }));
+  $('iCash').innerHTML = cm.length ? '<div class="card" style="padding:12px;margin:10px 0"><b>Possible cash payments</b><div class="mute" style="font-size:12px;margin-bottom:6px">A cash round was recorded for the same client around the same day. Link it if it is the same parcel.</div>' + cm.map(m => m.c.map(x => '<div style="margin:3px 0">Waybill ' + esc(m.o.waybill) + ' (' + esc(m.o.weight || (m.o.sameDay ? 'Same Day' : '')) + ' kg) &larr; ' + esc(x.round_id) + ' R' + Number(x.cash_price).toFixed(0) + ' (' + esc(x.same_day ? 'Same Day' : x.weight_kg + ' kg') + ') <button class="tab cm" data-o="' + esc(m.o.id) + '" data-r="' + esc(x.round_id) + '">Link</button></div>').join('')).join('') + '</div>' : '';
   $('iNot').innerHTML = r.notReady.length ? '<details style="margin:10px 0"><summary class="mute">' + r.notReady.length + ' order(s) are not ready yet (missing details)</summary><div class="card"><table><thead><tr><th>Date</th><th>Order</th><th>Waybill</th><th>Customer</th><th>Missing</th></tr></thead><tbody>' + r.notReady.map(o => '<tr><td>' + esc(dmy_(o.collectionDate)) + '</td><td>' + esc(o.id) + '</td><td>' + esc(o.waybill) + '</td><td>' + esc(custName(o.customerId)) + '</td><td>' + esc(o.missing.join(', ')) + '</td></tr>').join('') + '</tbody></table></div></details>' : '';
   drawInvList();
 }
@@ -735,14 +838,16 @@ function drawInvList() {
 }
 $('iUpTo').onchange = drawInvoicing; $('iq').oninput = drawInvList;
 async function reloadInvoicing() {
-  [ORDERS, WBS, INVOICES, INVLINES, SETTINGS, BOOKS] = await Promise.all([fetchAll('orders', { col: 'received', asc: false }), fetchAll('waybills', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('settings', null), fetchAll('books', { col: 'book_start', asc: true })]);
-  CURMONTH = (SETTINGS.find(x => x.key === 'CurrentMonth') || {}).value || CURMONTH; drawOrders(); drawShelf(); drawInvoicing();
+  [ORDERS, WBS, INVOICES, INVLINES, SETTINGS, BOOKS, CASHR] = await Promise.all([fetchAll('orders', { col: 'received', asc: false }), fetchAll('waybills', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('settings', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false })]);
+  CURMONTH = (SETTINGS.find(x => x.key === 'CurrentMonth') || {}).value || CURMONTH; drawOrders(); drawShelf(); drawInvoicing(); drawCash();
 }
 function invPayload(g) {
   const inv = g.inv; return { customer_id: g.cust.id, order_ids: g.ready.map(o => o.id), add_to: g.existing ? g.existing.number : '', invoice_date: g.date, due_date: inv.due, terms: inv.terms, memo: inv.memo, total: inv.total,
     lines: inv.lines.map(l => ({ item: l.item, desc: l.desc, qty: l.qty, rate: l.rate, amount: l.amount, tax_code: l.taxCode, tax_amount: l.tax })) };
 }
-$('iBody').onclick = e => { const b = e.target.closest('.ip'); if (b) previewInvoice(IGROUPS[Number(b.dataset.i)]); };
+$('iBody').onclick = async e => { const cb = e.target.closest('.cps'); if (cb) { const rows = Array.from(cb.parentNode.querySelectorAll('.cp')).map(x => ({ order_id: x.dataset.o, price: x.value })); const r = await sb.rpc('set_cash_prices', { p: rows }); if (r.error) { $('iMsg').innerHTML = '<p class="err">' + esc(r.error.message) + '</p>'; return; } await reloadInvoicing(); return; }
+  const mb = e.target.closest('.cm'); if (mb) { const r = await sb.rpc('apply_cash_round', { p_order: mb.dataset.o, p_round: mb.dataset.r }); if (r.error) { $('iMsg').innerHTML = '<p class="err">' + esc(r.error.message) + '</p>'; return; } await reloadInvoicing(); return; }
+  const b = e.target.closest('.ip'); if (b) previewInvoice(IGROUPS[Number(b.dataset.i)]); };
 $('iGo').onclick = async () => {
   const idx = Array.from(document.querySelectorAll('.ig')).filter(c => c.checked).map(c => Number(c.dataset.i)); if (!idx.length) { $('iMsg').innerHTML = '<p class="err">Tick at least one invoice.</p>'; return; }
   const gaps = await gapInfo(idx.map(i => IGROUPS[i]));
