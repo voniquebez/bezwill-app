@@ -36,6 +36,12 @@
   .drawer { position:fixed; top:0; right:0; bottom:0; width:min(460px,100%); background:#fff; border-left:1px solid var(--line); box-shadow:-8px 0 24px rgba(0,0,0,.08); padding:18px; overflow:auto; z-index:10; }
   .drawer h3 { margin:0 0 4px; } .drawer dl { display:grid; grid-template-columns:140px 1fr; gap:6px 10px; margin:14px 0; }
   .drawer dt { color:var(--mute); } .drawer dd { margin:0; word-break:break-word; }
+  .shelf { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:16px; }
+  .book { position:relative; background:linear-gradient(90deg,#14457c 0,#1d5fa8 14px,#fff 14px); border:1px solid #c9d3df; border-radius:4px 10px 10px 4px; padding:14px 14px 12px 30px; cursor:pointer; box-shadow:2px 3px 0 #dfe5ec,4px 6px 0 #eef1f5; }
+  .book:hover { transform:translateY(-2px); }
+  .book.out { background:linear-gradient(90deg,#7a4a00 0,#b26a00 14px,#fff 14px); }
+  .book .rng { font-weight:700; font-size:16px; } .book .who { margin:4px 0 8px; font-size:13px; }
+  .book .cnt { display:flex; gap:6px; flex-wrap:wrap; font-size:12px; }
   .hide { display:none !important; }
   .frm label { display:block; margin:10px 0 3px; color:var(--mute); font-size:13px; }
   .frm input[type=text], .frm input[type=date], .frm select, .frm textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; }
@@ -58,6 +64,7 @@
   <header>
     <h1>Bezwill Control</h1>
     <button class="tab on" id="tabOrders">Orders</button>
+    <button class="tab" id="tabBooks">Waybill books</button>
     <button class="tab" id="tabCustomers">Customers</button>
     <span class="sp"></span>
     <span class="mute" id="who"></span>
@@ -73,6 +80,15 @@
         <span class="count" id="ocount"></span>
       </div>
       <div class="card"><table><thead><tr><th>Received</th><th>Order</th><th>Waybill</th><th>Customer</th><th>Collection</th><th>Delivery</th><th>Kg</th><th>Driver</th><th>Status</th><th>Invoice</th></tr></thead><tbody id="obody"></tbody></table></div>
+    </section>
+    <section id="booksView" class="hide">
+      <div class="bar">
+        <button class="tab on" id="shBtnOn">In circulation</button>
+        <button class="tab" id="shBtnArch">Archived books</button>
+        <span class="sp"></span>
+        <button class="btn" id="bnew">+ Add new books</button>
+      </div>
+      <div id="shelf" class="shelf"></div>
     </section>
     <section id="customersView" class="hide">
       <div class="bar">
@@ -95,7 +111,7 @@ const SUPABASE_KEY = 'sb_publishable_o8FNrGvKzQ6-SfxStPxpJQ_WsMHLAsv';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let ORDERS = [], CUSTS = [], CBY = {}, TERMS = [], DRIVERS = [], ROLE = null;
+let ORDERS = [], CUSTS = [], CBY = {}, TERMS = [], DRIVERS = [], ROLE = null, ALIASES = {}, PRODUCTS = [], BOOKS = [], WBS = [], CURMONTH = '', SHELF = 'on';
 
 /* read every row, 1000 at a time (Supabase hands out at most 1000 per request) */
 async function fetchAll(table, order) {
@@ -130,10 +146,13 @@ async function start() {
     }
     $('noRole').classList.add('hide');
     $('obody').innerHTML = '<tr><td colspan="10" class="msg">Loading orders...</td></tr>';
-    [CUSTS, ORDERS, TERMS, DRIVERS] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null)]);
+    let SET, AL;
+    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null)]);
+    ALIASES = {}; AL.forEach(a => ALIASES[a.place] = a.customer_id); CURMONTH = (SET.find(x => x.key === 'CurrentMonth') || {}).value || '';
+    $('bnew').classList.toggle('hide', !canEdit());
     $('cnew').classList.toggle('hide', !canEdit()); $('onew').classList.toggle('hide', !canEdit());
     CBY = {}; CUSTS.forEach(c => CBY[c.customer_id] = c);
-    drawOrders(); drawCustomers();
+    drawOrders(); drawCustomers(); drawShelf();
   } catch (e) {
     show('app'); $('obody').innerHTML = '<tr><td colspan="10" class="msg err">Could not load: ' + esc(e.message || e) + '</td></tr>';
   }
@@ -149,12 +168,13 @@ $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('goLogin').c
 $('out').onclick = async () => { await sb.auth.signOut(); ORDERS = []; CUSTS = []; show('login'); };
 
 function tab(which) {
+  $('booksView').classList.toggle('hide', which !== 'books'); $('tabBooks').classList.toggle('on', which === 'books');
   $('ordersView').classList.toggle('hide', which !== 'orders');
   $('customersView').classList.toggle('hide', which !== 'customers');
   $('tabOrders').classList.toggle('on', which === 'orders'); $('tabCustomers').classList.toggle('on', which === 'customers');
   closeDrawer();
 }
-$('tabOrders').onclick = () => tab('orders'); $('tabCustomers').onclick = () => tab('customers');
+$('tabOrders').onclick = () => tab('orders'); $('tabBooks').onclick = () => tab('books'); $('tabCustomers').onclick = () => tab('customers');
 
 const fmtDT = s => s ? new Date(s).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'short' }) : '';
 const fmtD = s => s ? String(s).slice(0, 10) : '';
@@ -179,7 +199,7 @@ function drawCustomers() {
 }
 $('oq').oninput = drawOrders; $('ost').onchange = drawOrders; $('cq').oninput = drawCustomers; $('cact').onchange = drawCustomers;
 
-function closeDrawer() { $('drawer').classList.add('hide'); }
+function closeDrawer() { $('drawer').classList.add('hide'); $('drawer').style.width = ''; }
 function dl(pairs) { return '<dl>' + pairs.filter(p => p[1] !== '' && p[1] != null).map(p => '<dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd>').join('') + '</dl>'; }
 $('obody').onclick = e => {
   const tr = e.target.closest('tr[data-o]'); if (!tr) return;
@@ -238,30 +258,56 @@ async function saveCust(id) {
 }
 
 /* ---------- orders: add / edit (every rule is checked inside Supabase by save_order) ---------- */
+const placeKey = p => String(p || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+let GUESS_KEYS = null;
+function guessCust(place) {
+  const k = placeKey(place); if (!k) return '';
+  if (ALIASES[k] && CBY[ALIASES[k]]) return ALIASES[k];
+  if (!GUESS_KEYS) GUESS_KEYS = CUSTS.filter(c => c.active).map(c => ({ id: c.customer_id, n: placeKey(c.name) })).filter(c => c.n.length >= 4);
+  let best = '', len = 0; const hay = ' ' + k + ' ';
+  GUESS_KEYS.forEach(c => { if (c.n.length > len && hay.indexOf(' ' + c.n + ' ') >= 0) { best = c.id; len = c.n.length; } });
+  return best;
+}
+const surOptions = () => PRODUCTS.filter(p => /^surcharge/i.test(p.product_code) && !p.role && p.active !== false);
 function orderForm(o) {
   const isNew = !o; o = o || { who_pays: '', same_day: false };
   const f = (id, label, val, area) => '<label for="' + id + '">' + label + '</label>' + (area ? '<textarea id="' + id + '" rows="2">' : '<input type="text" id="' + id + '" value="') + esc(val == null ? '' : val) + (area ? '</textarea>' : '">');
   const act = CUSTS.filter(c => c.active || c.customer_id === o.customer_id);
   const drv = DRIVERS.filter(d => d.active !== false).map(d => d.name).filter(x => x); if (o.driver && drv.indexOf(o.driver) < 0) drv.push(o.driver);
   const cur = o.customer_id && CBY[o.customer_id] ? CBY[o.customer_id].name : '';
+  const have = {}; (Array.isArray(o.surcharges) ? o.surcharges : []).forEach(x => { if (x && x.code) have[x.code] = x.desc || ''; });
+  const sur = surOptions().map((p, i) => '<div style="display:flex;gap:8px;align-items:center;margin:6px 0"><label style="display:flex;gap:8px;align-items:center;margin:0;color:var(--ink);font-size:14px;min-width:210px"><input type="checkbox" class="o_sur" data-code="' + esc(p.product_code) + '"' + (p.product_code in have ? ' checked' : '') + '> ' + esc(p.name) + '</label><input type="text" class="o_surd" data-code="' + esc(p.product_code) + '" placeholder="description (optional)" value="' + esc(have[p.product_code] || '') + '" style="flex:1;padding:6px 8px;border:1px solid var(--line);border-radius:8px"></div>').join('');
   $('drawer').innerHTML = '<div class="frm"><button class="btn ghost" onclick="closeDrawer()">Cancel</button><h3 style="margin-top:12px">' + (isNew ? 'New order' : 'Edit order ' + esc(o.order_id)) + '</h3>' +
     f('o_col', 'Collection', o.collection) + f('o_del', 'Delivery', o.delivery) +
     '<label for="o_who">Who pays</label><select id="o_who"><option value=""></option>' + ['Sender', 'Receiver'].map(x => '<option' + (x === o.who_pays ? ' selected' : '') + '>' + x + '</option>').join('') + '</select>' +
-    '<label for="o_cust">Customer (pick from the list)</label><input type="text" id="o_cust" list="o_custlist" value="' + esc(cur) + '"><datalist id="o_custlist">' + act.map(c => '<option value="' + esc(c.name) + '">').join('') + '</datalist>' +
+    '<label for="o_cust">Customer (pick from the list)</label><input type="text" id="o_cust" list="o_custlist" value="' + esc(cur) + '"><datalist id="o_custlist">' + act.map(c => '<option value="' + esc(c.name) + '">').join('') + '</datalist><div id="o_guess" class="mute" style="font-size:12px"></div>' +
     '<label for="o_drv">Driver</label><select id="o_drv"><option value=""></option>' + drv.map(d => '<option' + (d === o.driver ? ' selected' : '') + '>' + esc(d) + '</option>').join('') + '</select>' +
-    f('o_wb', 'Waybill number', o.waybill) + f('o_kg', 'Weight (kg)', o.weight_kg) + f('o_pc', 'Parcels', o.parcels) + '<label for="o_cd">Collection date (leave empty for the received day)</label><input type="date" id="o_cd" value="' + esc(fmtD(o.collection_date)) + '">' +
-    '<div class="chk"><label><input type="checkbox" id="o_sd"' + (o.same_day ? ' checked' : '') + '> Same day</label></div>' + f('o_notes', 'Notes', o.notes, true) +
-    (o.volumetric || o.cash_paid || (Array.isArray(o.surcharges) && o.surcharges.length) || o.extra_discount ? '<p class="mute">This order has volumetric sizes, a cash price, surcharges or an extra discount. Those can\'t be changed here yet and are kept as they are.</p>' : '') +
+    f('o_wb', 'Waybill number', o.waybill) + f('o_kg', 'Weight (kg)', o.weight_kg) + f('o_pc', 'Parcels', o.parcels) +
+    '<div class="chk"><label><input type="checkbox" id="o_vol"' + (o.volumetric ? ' checked' : '') + '> Volumetric (weight worked out from the sizes, rounded up to a whole kg)</label></div>' +
+    '<div style="display:flex;gap:8px"><div style="flex:1">' + f('o_l', 'Length (cm)', o.length_cm) + '</div><div style="flex:1">' + f('o_w', 'Width (cm)', o.width_cm) + '</div><div style="flex:1">' + f('o_h', 'Height (cm)', o.height_cm) + '</div></div>' +
+    '<label for="o_cd">Collection date (leave empty for the received day)</label><input type="date" id="o_cd" value="' + esc(fmtD(o.collection_date)) + '">' +
+    '<div class="chk"><label><input type="checkbox" id="o_sd"' + (o.same_day ? ' checked' : '') + '> Same day</label></div>' +
+    (sur ? '<label>Surcharges</label>' + sur : '') +
+    '<div class="chk"><label><input type="checkbox" id="o_cash"' + (o.cash_paid ? ' checked' : '') + '> Customer paid cash</label></div>' + f('o_cp', 'Cash price (rand, including VAT)', o.cash_price) +
+    f('o_xd', 'Extra discount % (100 = no charge)', o.extra_discount) + f('o_notes', 'Notes', o.notes, true) +
     '<div class="row"><button class="btn" id="o_save">Save</button>' + (isNew ? '' : '<button class="btn ghost" id="o_cancel" style="margin-left:auto;color:var(--bad)">Cancel this order</button>') + '</div><p id="o_err" class="err"></p></div>';
   $('o_save').onclick = () => saveOrder(isNew ? null : o.order_id, false);
   if (!isNew) $('o_cancel').onclick = () => { if (confirm('Cancel order ' + o.order_id + '? Its waybill number is freed up for another order.')) saveOrder(o.order_id, true); };
+  let auto = !cur; // the customer box is filled in for you only while you have not chosen one yourself
+  const tryGuess = () => {
+    if (!auto) return; const who = $('o_who').value, place = who === 'Sender' ? $('o_col').value : who === 'Receiver' ? $('o_del').value : '';
+    const id = guessCust(place); if (id) { $('o_cust').value = CBY[id].name; $('o_guess').textContent = 'Guessed from the place name. Please check it.'; } else if (!$('o_cust').value) $('o_guess').textContent = '';
+  };
+  ['o_col', 'o_del'].forEach(k => $(k).oninput = tryGuess); $('o_who').onchange = tryGuess; $('o_cust').oninput = () => { auto = false; $('o_guess').textContent = ''; };
   $('drawer').classList.remove('hide');
 }
 function editOrder(id) { const o = ORDERS.find(x => x.order_id === id); if (o) orderForm(o); }
 $('onew').onclick = () => orderForm(null);
 async function saveOrder(id, cancel) {
   const v = k => $(k).value.trim(), err = m => { $('o_err').textContent = m; };
-  const p = { collection: v('o_col'), delivery: v('o_del'), who_pays: v('o_who'), driver: v('o_drv'), waybill: v('o_wb'), weight_kg: v('o_kg'), parcels: v('o_pc'), collection_date: v('o_cd').replace(/\//g, '-'), same_day: $('o_sd').checked, notes: v('o_notes') };
+  const p = { collection: v('o_col'), delivery: v('o_del'), who_pays: v('o_who'), driver: v('o_drv'), waybill: v('o_wb'), weight_kg: v('o_kg'), parcels: v('o_pc'), collection_date: v('o_cd').replace(/\//g, '-'), same_day: $('o_sd').checked, notes: v('o_notes'),
+    volumetric: $('o_vol').checked, length_cm: v('o_l'), width_cm: v('o_w'), height_cm: v('o_h'), cash_paid: $('o_cash').checked, cash_price: v('o_cp'), extra_discount: v('o_xd'), surcharges: [] };
+  document.querySelectorAll('.o_sur').forEach(cb => { if (cb.checked) { const d = document.querySelector('.o_surd[data-code="' + cb.dataset.code + '"]'); p.surcharges.push({ code: cb.dataset.code, desc: d ? d.value.trim() : '' }); } });
   const cn = v('o_cust').toLowerCase();
   if (cn) { const c = CUSTS.find(x => x.name.trim().toLowerCase() === cn); if (!c) return err('Pick the customer from the list (or add the customer on the Customers screen first).'); p.customer_id = c.customer_id; } else p.customer_id = '';
   if (id) p.order_id = id; if (cancel) p.cancel = true;
@@ -271,8 +317,62 @@ async function saveOrder(id, cancel) {
   if (res.error) return err(res.error.message);
   const saved = res.data;
   if (id) ORDERS = ORDERS.map(o => o.order_id === id ? saved : o); else ORDERS.unshift(saved);
-  drawOrders(); closeDrawer();
+  if (saved.customer_id && saved.who_pays) { const pl = placeKey(saved.who_pays === 'Sender' ? saved.collection : saved.delivery); if (pl) ALIASES[pl] = saved.customer_id; }
+  drawOrders(); drawShelf(); closeDrawer();
 }
+
+/* ---------- waybill books ---------- */
+function bookStats() {
+  const by = {}; const om = {}; ORDERS.forEach(o => { if (o.waybill && o.status !== 'Cancelled') om[o.waybill] = o; });
+  WBS.forEach(w => { const a = by[w.book_start] || (by[w.book_start] = { open: 0, invoiced: 0, cancelled: 0, carried: 0, onOrder: 0 });
+    if (w.status === 'Invoiced') a.invoiced++; else if (w.status === 'Cancelled') a.cancelled++; else if (w.billing_month === CURMONTH) { a.open++; if (om[w.waybill]) a.onOrder++; } else a.carried++; });
+  return by;
+}
+function setShelf(v) { SHELF = v; $('shBtnOn').classList.toggle('on', v === 'on'); $('shBtnArch').classList.toggle('on', v === 'arch'); drawShelf(); }
+$('shBtnOn').onclick = () => setShelf('on'); $('shBtnArch').onclick = () => setShelf('arch');
+function drawShelf() {
+  const st = bookStats(), zero = { open: 0, invoiced: 0, cancelled: 0, carried: 0, onOrder: 0 };
+  const done = b => { const a = st[b.book_start] || zero; return a.open === 0 && a.carried === 0 && a.invoiced + a.cancelled > 0; };
+  const nOn = BOOKS.filter(b => !done(b)).length, nArch = BOOKS.length - nOn;
+  $('shBtnOn').textContent = 'In circulation (' + nOn + ')'; $('shBtnArch').textContent = 'Archived books (' + nArch + ')';
+  const list = BOOKS.filter(b => (SHELF === 'arch') === done(b)).sort((x, y) => SHELF === 'arch' ? y.book_start - x.book_start : x.book_start - y.book_start);
+  $('shelf').innerHTML = list.length ? list.map(b => { const a = st[b.book_start] || zero;
+    return '<div class="book' + (b.holder ? ' out' : '') + '" data-b="' + b.book_start + '"><div class="rng">' + b.book_start + ' &ndash; ' + b.book_end + '</div><div class="who">' + (b.holder ? 'Out with <b>' + esc(b.holder) + '</b>' + (b.date_out ? ' since ' + esc(fmtD(b.date_out)) : '') : 'At the office') + '</div><div class="cnt"><span class="pill">' + a.open + ' open</span><span class="pill Invoiced">' + a.invoiced + ' invoiced</span><span class="pill Cancelled">' + a.cancelled + ' cancelled</span>' + (a.carried ? '<span class="pill Weighed">' + a.carried + ' carried over</span>' : '') + '</div></div>'; }).join('') : '<div class="msg">No books here.</div>';
+}
+$('shelf').onclick = e => { const el = e.target.closest('.book'); if (el) openBook(Number(el.dataset.b)); };
+function openBook(start) {
+  const b = BOOKS.find(x => x.book_start === start); if (!b) return;
+  const om = {}; ORDERS.forEach(o => { if (o.waybill && o.status !== 'Cancelled') om[o.waybill] = o; });
+  const rows = WBS.filter(w => w.book_start === start).sort((x, y) => x.waybill - y.waybill).map(w => {
+    const state = w.status === 'Invoiced' ? 'Invoiced' : w.status === 'Cancelled' ? 'Cancelled' : (w.billing_month === CURMONTH ? 'Open' : 'Carried over'), o = om[w.waybill];
+    return '<tr><td>' + w.waybill + '</td><td><span class="pill ' + (state === 'Carried over' ? 'Weighed' : state) + '">' + state + '</span></td><td>' + esc(w.invoice_no) + '</td><td>' + esc(custName(w.customer_id) || (o ? custName(o.customer_id) : '')) + '</td><td>' + (w.cash_paid ? 'Cash' : '') + '</td><td class="mute">' + (o ? esc(o.order_id + ' ' + (o.delivery || '')) : '') + '</td></tr>'; }).join('');
+  const drv = DRIVERS.filter(d => d.active !== false).map(d => d.name).filter(x => x); if (b.holder && drv.indexOf(b.holder) < 0) drv.push(b.holder);
+  $('drawer').style.width = 'min(720px,100%)';
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Book ' + b.book_start + ' &ndash; ' + b.book_end + '</h3><div class="mute">' + (b.holder ? 'Out with ' + esc(b.holder) : 'At the office') + '</div>' +
+    (canEdit() ? '<div class="frm"><label for="b_h">Who has this book?</label><div style="display:flex;gap:8px"><select id="b_h" style="flex:1"><option value="">At the office</option>' + drv.map(d => '<option' + (d === b.holder ? ' selected' : '') + '>' + esc(d) + '</option>').join('') + '</select><button class="btn" id="b_hs">Save</button></div>' +
+      '<label for="b_n">Notes</label><textarea id="b_n" rows="3">' + esc(b.notes || '') + '</textarea><div class="row"><button class="btn ghost" id="b_ns">Save notes</button></div><p id="b_err" class="err"></p></div>' : (b.notes ? '<pre class="mute" style="white-space:pre-wrap">' + esc(b.notes) + '</pre>' : '')) +
+    '<div class="card" style="margin-top:12px;max-height:60vh"><table><thead><tr><th>Waybill</th><th>Status</th><th>Invoice</th><th>Customer</th><th></th><th>Order</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  if (canEdit()) {
+    const upd = r => { if (r.error) { $('b_err').textContent = r.error.message; return false; } BOOKS = BOOKS.map(x => x.book_start === start ? r.data : x); drawShelf(); return true; };
+    $('b_hs').onclick = async () => { $('b_err').textContent = 'Saving...'; if (upd(await sb.rpc('set_holder', { p_start: start, p_holder: $('b_h').value }))) openBook(start); };
+    $('b_ns').onclick = async () => { $('b_err').textContent = 'Saving...'; if (upd(await sb.rpc('save_book_note', { p_start: start, p_note: $('b_n').value }))) $('b_err').textContent = 'Notes saved.'; };
+  }
+  $('drawer').classList.remove('hide');
+}
+$('bnew').onclick = () => {
+  const last = BOOKS.reduce((m, b) => Math.max(m, b.book_end), 0), drv = DRIVERS.filter(d => d.active !== false).map(d => d.name).filter(x => x);
+  $('drawer').style.width = '';
+  $('drawer').innerHTML = '<div class="frm"><button class="btn ghost" onclick="closeDrawer()">Cancel</button><h3 style="margin-top:12px">Add new books</h3><p class="mute">Each book has 50 waybills. The first number of the first book is suggested for you.</p>' +
+    '<label for="nb_first">First waybill number</label><input type="text" id="nb_first" value="' + (last ? last + 1 : '') + '"><label for="nb_count">Number of books</label><input type="text" id="nb_count" value="1">' +
+    '<label for="nb_h">Who gets them?</label><select id="nb_h"><option value="">At the office</option>' + drv.map(d => '<option>' + esc(d) + '</option>').join('') + '</select><div class="row"><button class="btn" id="nb_save">Add</button></div><p id="nb_err" class="err"></p></div>';
+  $('nb_save').onclick = async () => {
+    $('nb_err').textContent = 'Saving...';
+    const r = await sb.rpc('add_books', { p_first: parseInt($('nb_first').value, 10) || 0, p_count: parseInt($('nb_count').value, 10) || 0, p_holder: $('nb_h').value || null });
+    if (r.error) { $('nb_err').textContent = r.error.message; return; }
+    [BOOKS, WBS] = await Promise.all([fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null)]); drawShelf(); closeDrawer();
+  };
+  $('drawer').classList.remove('hide');
+};
 
 start();
 </script>
