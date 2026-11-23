@@ -38,7 +38,7 @@
   .drawer dt { color:var(--mute); } .drawer dd { margin:0; word-break:break-word; }
   .hide { display:none !important; }
   .frm label { display:block; margin:10px 0 3px; color:var(--mute); font-size:13px; }
-  .frm input[type=text], .frm select, .frm textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+  .frm input[type=text], .frm input[type=date], .frm select, .frm textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; }
   .frm .chk label { display:flex; gap:8px; align-items:center; color:var(--ink); font-size:15px; margin:8px 0; }
   .frm .row { display:flex; gap:8px; margin-top:16px; }
   .count { color:var(--mute); font-size:13px; }
@@ -249,7 +249,7 @@ function orderForm(o) {
     '<label for="o_who">Who pays</label><select id="o_who"><option value=""></option>' + ['Sender', 'Receiver'].map(x => '<option' + (x === o.who_pays ? ' selected' : '') + '>' + x + '</option>').join('') + '</select>' +
     '<label for="o_cust">Customer (pick from the list)</label><input type="text" id="o_cust" list="o_custlist" value="' + esc(cur) + '"><datalist id="o_custlist">' + act.map(c => '<option value="' + esc(c.name) + '">').join('') + '</datalist>' +
     '<label for="o_drv">Driver</label><select id="o_drv"><option value=""></option>' + drv.map(d => '<option' + (d === o.driver ? ' selected' : '') + '>' + esc(d) + '</option>').join('') + '</select>' +
-    f('o_wb', 'Waybill number', o.waybill) + f('o_kg', 'Weight (kg)', o.weight_kg) + f('o_pc', 'Parcels', o.parcels) + f('o_cd', 'Collection date (yyyy-mm-dd, leave empty for the received day)', fmtD(o.collection_date)) +
+    f('o_wb', 'Waybill number', o.waybill) + f('o_kg', 'Weight (kg)', o.weight_kg) + f('o_pc', 'Parcels', o.parcels) + '<label for="o_cd">Collection date (leave empty for the received day)</label><input type="date" id="o_cd" value="' + esc(fmtD(o.collection_date)) + '">' +
     '<div class="chk"><label><input type="checkbox" id="o_sd"' + (o.same_day ? ' checked' : '') + '> Same day</label></div>' + f('o_notes', 'Notes', o.notes, true) +
     (o.volumetric || o.cash_paid || (Array.isArray(o.surcharges) && o.surcharges.length) || o.extra_discount ? '<p class="mute">This order has volumetric sizes, a cash price, surcharges or an extra discount. Those can\'t be changed here yet and are kept as they are.</p>' : '') +
     '<div class="row"><button class="btn" id="o_save">Save</button>' + (isNew ? '' : '<button class="btn ghost" id="o_cancel" style="margin-left:auto;color:var(--bad)">Cancel this order</button>') + '</div><p id="o_err" class="err"></p></div>';
@@ -261,7 +261,7 @@ function editOrder(id) { const o = ORDERS.find(x => x.order_id === id); if (o) o
 $('onew').onclick = () => orderForm(null);
 async function saveOrder(id, cancel) {
   const v = k => $(k).value.trim(), err = m => { $('o_err').textContent = m; };
-  const p = { collection: v('o_col'), delivery: v('o_del'), who_pays: v('o_who'), driver: v('o_drv'), waybill: v('o_wb'), weight_kg: v('o_kg'), parcels: v('o_pc'), collection_date: v('o_cd'), same_day: $('o_sd').checked, notes: v('o_notes') };
+  const p = { collection: v('o_col'), delivery: v('o_del'), who_pays: v('o_who'), driver: v('o_drv'), waybill: v('o_wb'), weight_kg: v('o_kg'), parcels: v('o_pc'), collection_date: v('o_cd').replace(/\//g, '-'), same_day: $('o_sd').checked, notes: v('o_notes') };
   const cn = v('o_cust').toLowerCase();
   if (cn) { const c = CUSTS.find(x => x.name.trim().toLowerCase() === cn); if (!c) return err('Pick the customer from the list (or add the customer on the Customers screen first).'); p.customer_id = c.customer_id; } else p.customer_id = '';
   if (id) p.order_id = id; if (cancel) p.cancel = true;
