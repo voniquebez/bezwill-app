@@ -537,7 +537,7 @@ function drawShelf() {
   const done = b => { const a = st[b.book_start] || zero; return a.open === 0 && a.carried === 0 && a.invoiced + a.cancelled > 0; };
   const nOn = BOOKS.filter(b => !done(b)).length, nArch = BOOKS.length - nOn;
   $('shBtnOn').textContent = 'In circulation (' + nOn + ')'; $('shBtnArch').textContent = 'Archived books (' + nArch + ')';
-  const list = BOOKS.filter(b => (SHELF === 'arch') === done(b)).sort((x, y) => SHELF === 'arch' ? y.book_start - x.book_start : x.book_start - y.book_start);
+  const list = BOOKS.filter(b => (SHELF === 'arch') === done(b)).sort((x, y) => Number(x.book_start) - Number(y.book_start));
   $('monthPill').textContent = 'Invoicing month: ' + CURMONTH;
   $('shelf').innerHTML = list.length ? list.map(b => { const a = st[b.book_start] || zero, cls = done(b) ? 'done' : (b.holder ? 'out' : 'office');
     return '<div class="book ' + cls + '" data-b="' + b.book_start + '"><div class="plate"><div class="t">Waybills</div><div class="r">' + b.book_start + ' &ndash; ' + b.book_end + '</div></div><div class="where">' + (b.holder ? 'Out with ' + esc(b.holder) + (b.date_out ? '<small>since ' + esc(fmtD(b.date_out)) + '</small>' : '') : (done(b) ? 'Finished' : 'At the office')) + '</div><div class="counts"><span>' + a.open + ' open</span><span>' + a.invoiced + ' invoiced</span><span>' + a.cancelled + ' cancelled</span>' + (a.carried ? '<span>' + a.carried + ' carried</span>' : '') + '</div></div>'; }).join('') : '<div class="msg">No books here.</div>';
