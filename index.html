@@ -78,11 +78,11 @@
     <section id="ordersView">
       <div class="bar">
         <input type="text" id="oq" placeholder="Search orders: waybill, customer, place, driver, invoice...">
-        <button class="btn" id="onew">+ New order</button><button class="btn ghost" id="oimp">Import WhatsApp chat</button>
+        <button class="btn" id="onew">+ New order</button><button class="btn ghost" id="oimp">Import WhatsApp chat</button><button class="btn ghost" id="ocancel">Cancel ticked orders</button>
         <select id="ost"><option value="">All statuses</option><option>New</option><option>Assigned</option><option>Weighed</option><option>Invoiced</option><option>Cancelled</option></select>
         <span class="count" id="ocount"></span>
       </div>
-      <div class="card"><table><thead><tr><th>Received</th><th>Order</th><th>Waybill</th><th>Customer</th><th>Collection</th><th>Delivery</th><th>Kg</th><th>Driver</th><th>Status</th><th>Invoice</th></tr></thead><tbody id="obody"></tbody></table></div>
+      <div class="card"><table><thead><tr><th></th><th>Received</th><th>Order</th><th>Waybill</th><th>Customer</th><th>Collection</th><th>Delivery</th><th>Kg</th><th>Driver</th><th>Status</th><th>Invoice</th></tr></thead><tbody id="obody"></tbody></table></div>
     </section>
     <section id="invoicingView" class="hide">
       <div id="iGate"></div>
@@ -113,7 +113,7 @@
         <button class="tab on" id="shBtnOn">In circulation</button>
         <button class="tab" id="shBtnArch">Archived books</button>
         <span class="sp"></span>
-        <button class="btn" id="bnew">+ Add new books</button>
+        <button class="btn" id="bnew">+ Add new books</button><button class="btn ghost" id="bneed">Still to invoice</button><input type="text" id="bfq" placeholder="Waybill number" size="12" inputmode="numeric"><button class="btn ghost" id="bfind">Look up</button>
       </div>
       <div id="shelf" class="shelf"></div>
     </section>
@@ -225,7 +225,31 @@ const fmtDT = s => s ? new Date(s).toLocaleString('en-ZA', { timeZone: 'Africa/J
 const fmtD = s => s ? String(s).slice(0, 10) : '';
 const custName = id => (id && CBY[id]) ? CBY[id].name : '';
 
+
+const DUP_STOP_ = { the: 1, and: 1, road: 1, rd: 1, street: 1, st: 1, ave: 1, avenue: 1, pty: 1, ltd: 1, cc: 1, co: 1, at: 1, to: 1, of: 1 };
+const placeKey_ = p => String(p || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+function placeTokens_(s) { const seen = {}, out = []; placeKey_(s).split(' ').forEach(w => { if (w && !DUP_STOP_[w] && !seen[w]) { seen[w] = 1; out.push(w); } }); return out; }
+let PT_MEMO_ = null;
+const placeTokensM_ = s => { if (!PT_MEMO_) return placeTokens_(s); const k = String(s); return Object.prototype.hasOwnProperty.call(PT_MEMO_, k) ? PT_MEMO_[k] : (PT_MEMO_[k] = placeTokens_(s)); };
+function placeSame_(a, b) { const x = placeTokensM_(a), y = placeTokensM_(b); if (!x.length || !y.length) return null; const inter = x.filter(w => y.indexOf(w) >= 0).length; return inter / Math.min(x.length, y.length) >= 0.75 ? 1 : 0; }
+const dayNum_ = ymd => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || '')); return m ? Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000) : null; };
+const pairKey_ = (a, b) => a < b ? a + '|' + b : b + '|' + a;
+function dupMap_() {
+  PT_MEMO_ = {}; const out = {};
+  try {
+    const dis = {}; try { JSON.parse(setting('DupDismissed', '[]')).forEach(k => dis[k] = 1); } catch (e) {}
+    const live = ORDERS.filter(o => o.status !== 'Cancelled').map(o => ({ o, day: dayNum_(o.collection_date ? String(o.collection_date).slice(0, 10) : recvDay(o.received)) })).filter(x => x.day !== null), by = {};
+    live.forEach(x => (by[x.day] = by[x.day] || []).push(x.o));
+    live.forEach(x => { const a = x.o; [x.day - 1, x.day, x.day + 1].forEach(k => (by[k] || []).forEach(b => {
+      if (a.order_id === b.order_id || dis[pairKey_(a.order_id, b.order_id)]) return; if (a.waybill != null && b.waybill != null) return;
+      const c1 = placeSame_(a.collection, b.collection), c2 = placeSame_(a.delivery, b.delivery); if (c1 === 0 || c2 === 0 || (c1 === null && c2 === null)) return;
+      (out[a.order_id] = out[a.order_id] || []).push(b); })); });
+  } finally { PT_MEMO_ = null; }
+  return out;
+}
+let DUPS = {};
 function drawOrders() {
+  DUPS = dupMap_();
   const q = $('oq').value.trim().toLowerCase(), st = $('ost').value;
   const rows = ORDERS.filter(o => {
     if (st && o.status !== st) return false;
@@ -234,7 +258,7 @@ function drawOrders() {
   });
   $('ocount').textContent = rows.length + ' of ' + ORDERS.length;
   const shown = rows.slice(0, 300);
-  $('obody').innerHTML = shown.length ? shown.map(o => '<tr class="click" data-o="' + esc(o.order_id) + '"><td>' + esc(fmtDT(o.received)) + '</td><td>' + esc(o.order_id) + '</td><td>' + esc(o.waybill) + '</td><td>' + esc(custName(o.customer_id)) + '</td><td>' + esc(o.collection) + '</td><td>' + esc(o.delivery) + '</td><td>' + esc(o.weight_kg) + '</td><td>' + esc(o.driver) + '</td><td><span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span></td><td>' + esc(o.invoice_no) + '</td></tr>').join('') + (rows.length > shown.length ? '<tr><td colspan="10" class="msg">Showing the newest 300. Type in the search box to narrow it down.</td></tr>' : '') : '<tr><td colspan="10" class="msg">No orders found.</td></tr>';
+  $('obody').innerHTML = shown.length ? shown.map(o => '<tr class="click" data-o="' + esc(o.order_id) + '"><td>' + (canEdit() && o.status !== 'Invoiced' && o.status !== 'Cancelled' ? '<input type="checkbox" class="osel" data-o="' + esc(o.order_id) + '">' : '') + '</td><td>' + esc(fmtDT(o.received)) + '</td><td>' + esc(o.order_id) + '</td><td>' + esc(o.waybill) + '</td><td>' + esc(custName(o.customer_id)) + '</td><td>' + esc(o.collection) + '</td><td>' + esc(o.delivery) + '</td><td>' + esc(o.weight_kg) + '</td><td>' + esc(o.driver) + '</td><td><span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span>' + (DUPS[o.order_id] ? ' <span class="pill Weighed" title="Looks like another order">dup?</span>' : '') + '</td><td>' + esc(o.invoice_no) + '</td></tr>').join('') + (rows.length > shown.length ? '<tr><td colspan="11" class="msg">Showing the newest 300. Type in the search box to narrow it down.</td></tr>' : '') : '<tr><td colspan="11" class="msg">No orders found.</td></tr>';
 }
 function drawCustomers() {
   const q = $('cq').value.trim().toLowerCase(), act = $('cact').checked;
@@ -247,11 +271,13 @@ $('oq').oninput = drawOrders; $('ost').onchange = drawOrders; $('cq').oninput = 
 function closeDrawer() { $('drawer').classList.add('hide'); $('drawer').style.width = ''; }
 function dl(pairs) { return '<dl>' + pairs.filter(p => p[1] !== '' && p[1] != null).map(p => '<dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd>').join('') + '</dl>'; }
 $('obody').onclick = e => {
+  if (e.target.closest && e.target.closest('.osel') && e.target.classList && e.target.classList.contains && e.target.classList.contains('osel')) return;
   const tr = e.target.closest('tr[data-o]'); if (!tr) return;
   const o = ORDERS.find(x => x.order_id === tr.dataset.o); if (!o) return;
   const sur = Array.isArray(o.surcharges) ? o.surcharges.map(s => typeof s === 'string' ? s : JSON.stringify(s)).join(', ') : '';
   $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button> ' + (canEdit() && o.status !== 'Invoiced' ? '<button class="btn" onclick="editOrder(\'' + esc(o.order_id) + '\')">Edit</button>' : '') + '<h3 style="margin-top:12px">Order ' + esc(o.order_id) + '</h3><span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span>' +
     dl([['Received', fmtDT(o.received)], ['Customer', custName(o.customer_id)], ['Who pays', o.who_pays], ['Waybill', o.waybill], ['Collection', o.collection], ['Delivery', o.delivery], ['Collection date', fmtD(o.collection_date)], ['Driver', o.driver], ['Source', o.source], ['Weight (kg)', o.weight_kg], ['Parcels', o.parcels], ['Volumetric', o.volumetric ? ('Yes: ' + [o.length_cm, o.width_cm, o.height_cm].join(' x ') + ' cm') : ''], ['Surcharges', sur], ['Same day', o.same_day ? 'Yes' : ''], ['Cash', o.cash_paid ? 'Paid cash' : ''], ['Cash price', o.cash_price], ['Extra discount %', o.extra_discount], ['Invoice', o.invoice_no], ['Notes', o.notes], ['Map link', o.maps_link], ['Last changed', fmtDT(o.updated_at) + (o.updated_by ? ' by ' + o.updated_by : '')]]);
+  dupSection(o);
   $('drawer').classList.remove('hide');
 };
 $('cbody').onclick = e => {
@@ -1021,6 +1047,43 @@ $('cmerge').onclick = () => {
     $('mg_out').innerHTML = '<p>Keep <b>' + esc(k.name) + '</b> (' + esc(keep) + '). Merge: ' + ids.map(id => '<b>' + esc(CBY[id].name) + '</b> (' + usageOf(id).orders + ' orders, ' + usageOf(id).invoices + ' invoices)').join('; ') + '.</p>' + notes.map(n => '<p class="mute">' + esc(n) + '</p>').join('') + '<div class="row"><button class="btn" id="mg_go">Merge now</button></div>';
     $('mg_go').onclick = async () => { $('mg_err').textContent = 'Saving...'; const r = await sb.rpc('merge_customers', { p_keep: keep, p_merge: ids }); if (r.error) { $('mg_err').textContent = r.error.message; return; } await reloadInvoicing(); CUSTS = await fetchAll('customers', { col: 'name', asc: true }); CUSTS.forEach(c => CBY[c.customer_id] = c); Object.keys(CBY).forEach(id => { if (!CUSTS.some(c => c.customer_id === id)) delete CBY[id]; }); drawCustomers(); drawOrders(); $('mg_out').innerHTML = '<p><b>Merged.</b> Moved: ' + esc(JSON.stringify(r.data)) + '</p>'; $('mg_err').textContent = ''; };
   };
+  $('drawer').classList.remove('hide');
+};
+
+function dupSection(o) {
+  const d = DUPS[o.order_id]; if (!d || !d.length || !canEdit()) return;
+  $('drawer').innerHTML += '<div class="card" style="padding:12px;margin-top:12px;border-color:var(--warn);background:#fff8ea"><b>Possible duplicate</b><div class="mute" style="font-size:12px">Same places on the same day (or a day apart).</div>' + d.map(b => '<div style="margin:8px 0">' + esc(b.order_id) + ' &middot; ' + esc(b.status) + (b.waybill ? ' &middot; WB ' + esc(b.waybill) : '') + ' &middot; ' + esc((b.collection || '?') + ' -> ' + (b.delivery || '?')) + ' ' + esc(custName(b.customer_id)) +
+    '<div class="row" style="margin-top:4px"><button class="btn ghost dm" data-keep="' + esc(o.order_id) + '" data-drop="' + esc(b.order_id) + '">Keep this one, remove ' + esc(b.order_id) + '</button><button class="btn ghost dm" data-keep="' + esc(b.order_id) + '" data-drop="' + esc(o.order_id) + '">Keep ' + esc(b.order_id) + ', remove this</button><button class="btn ghost dn" data-a="' + esc(o.order_id) + '" data-b="' + esc(b.order_id) + '">Not a duplicate</button></div></div>').join('') + '<p id="dup_err" class="err"></p></div>';
+  $('drawer').onclick = async e => {
+    const m = e.target.closest && e.target.closest('.dm'), n = e.target.closest && e.target.closest('.dn'); if (!m && !n) return;
+    const r = m ? await sb.rpc('merge_orders', { p_keep: m.dataset.keep, p_drop: m.dataset.drop }) : await sb.rpc('dismiss_duplicate', { p_a: n.dataset.a, p_b: n.dataset.b });
+    if (r.error) { $('dup_err').textContent = r.error.message; return; } $('drawer').onclick = null; closeDrawer(); await reloadInvoicing();
+  };
+}
+$('ocancel').onclick = async () => {
+  const ids = Array.from(document.querySelectorAll('.osel')).filter(c => c.checked).map(c => c.dataset.o); if (!ids.length) { alert('Tick the orders to cancel first.'); return; }
+  if (!confirm('Cancel ' + ids.length + ' order(s)?')) return;
+  const r = await sb.rpc('cancel_orders', { p_ids: ids }); if (r.error) { alert(r.error.message); return; } await reloadInvoicing();
+  if (r.data.skipped && r.data.skipped.length) alert('Cancelled ' + r.data.cancelled + '. Skipped: ' + r.data.skipped.join(', '));
+};
+/* ---------- still to invoice + waybill look-up ---------- */
+function compress_(nums) { const a = nums.slice().sort((x, y) => x - y), out = []; for (let i = 0; i < a.length;) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(j > i ? a[i] + '-' + a[j] : String(a[i])); i = j + 1; } return out.join(', '); }
+$('bneed').onclick = () => {
+  const by = {}; let total = 0, carried = 0; WBS.forEach(w => { if (w.status !== 'Open') return; if (w.billing_month !== CURMONTH) { carried++; return; } (by[w.book_start] = by[w.book_start] || []).push(w.waybill); total++; });
+  const gaps = computeGaps_(WBS, [], CURMONTH);
+  $('drawer').style.width = 'min(720px,100%)';
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Still to invoice (' + esc(CURMONTH) + ')</h3><p><b>' + total + '</b> open waybill(s)' + (carried ? ', ' + carried + ' carried over to next month' : '') + '.</p>' +
+    (gaps.length ? '<div class="card" style="padding:10px;border-color:var(--warn);background:#fff8ea"><b>Skipped (open, below a later invoiced waybill):</b> ' + esc(compress_(gaps)) + '</div>' : '<p class="mute">No skipped waybills.</p>') +
+    '<div class="card" style="margin-top:10px;max-height:55vh"><table><thead><tr><th>Book</th><th>Open</th><th>Waybills</th></tr></thead><tbody>' + Object.keys(by).map(Number).sort((a, b) => a - b).map(k => '<tr><td>' + k + '</td><td>' + by[k].length + '</td><td>' + esc(compress_(by[k])) + '</td></tr>').join('') + '</tbody></table></div>';
+  $('drawer').classList.remove('hide');
+};
+$('bfind').onclick = async () => {
+  const n = parseInt($('bfq').value, 10), w = WBS.find(x => x.waybill === n); if (!w) { alert('Waybill ' + ($('bfq').value || '?') + ' is not in any of your books.'); return; }
+  const r = await sb.from('waybill_ledger').select('*').eq('waybill', n).order('id', { ascending: true }), ev = r.data || [], o = ORDERS.find(x => x.waybill === n && x.status !== 'Cancelled');
+  $('drawer').style.width = 'min(640px,100%)';
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Waybill ' + n + '</h3><span class="pill ' + esc(w.status) + '">' + esc(w.status) + '</span> <span class="mute">book ' + w.book_start + ' &middot; ' + esc(w.billing_month) + '</span>' +
+    dl([['Invoice', w.invoice_no], ['Customer', custName(w.customer_id)], ['Cash', w.cash_paid ? 'Yes' : ''], ['Note', w.note], ['Order', o ? o.order_id + ' ' + (o.delivery || '') : '']]) + '<h4>History</h4>' +
+    (ev.length ? '<table><thead><tr><th>When</th><th>What</th><th>Source</th><th>Note</th></tr></thead><tbody>' + ev.map(e => '<tr><td>' + esc(fmtDT(e.happened_at)) + '</td><td>' + esc([e.ref, e.credit_note ? 'credit ' + e.credit_note : '', e.new_invoice ? 'new ' + e.new_invoice : ''].filter(Boolean).join(' / ')) + '</td><td>' + esc(e.source) + '</td><td>' + esc(e.note) + '</td></tr>').join('') + '</tbody></table>' : '<p class="mute">Nothing recorded yet.</p>');
   $('drawer').classList.remove('hide');
 };
 start();
