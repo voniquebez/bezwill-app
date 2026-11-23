@@ -78,7 +78,7 @@
     <section id="ordersView">
       <div class="bar">
         <input type="text" id="oq" placeholder="Search orders: waybill, customer, place, driver, invoice...">
-        <button class="btn" id="onew">+ New order</button>
+        <button class="btn" id="onew">+ New order</button><button class="btn ghost" id="oimp">Import WhatsApp chat</button>
         <select id="ost"><option value="">All statuses</option><option>New</option><option>Assigned</option><option>Weighed</option><option>Invoiced</option><option>Cancelled</option></select>
         <span class="count" id="ocount"></span>
       </div>
@@ -135,7 +135,7 @@
       <div class="bar">
         <input type="text" id="cq" placeholder="Search customers: name, number, phone, email...">
         <label><input type="checkbox" id="cact" checked> Active only</label>
-        <button class="btn" id="cnew">+ New customer</button>
+        <button class="btn" id="cnew">+ New customer</button><button class="btn ghost" id="cmerge">Merge clients</button>
         <span class="count" id="ccount"></span>
       </div>
       <div class="card"><table><thead><tr><th>ID</th><th>Name</th><th>Phones</th><th>Email</th><th>Terms</th><th>Flags</th></tr></thead><tbody id="cbody"></tbody></table></div>
@@ -897,6 +897,132 @@ async function downloadQbo(all) {
 $('iDl').onclick = () => downloadQbo(false); $('iDlAll').onclick = () => downloadQbo(true);
 $('iUndo').onclick = async () => { const r = await sb.rpc('mark_exported', { p_nos: LASTDL, p_on: false }); if (r.error) { $('iDlInfo').textContent = r.error.message; return; } $('iUndo').style.display = 'none'; await reloadInvoicing(); $('iDlInfo').textContent = 'Put back to "to download": ' + LASTDL.join(', '); };
 
+function hash_(str) { var h = 5381; for (var i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0; return h.toString(16); }
+function driverFromFile_(name) { return String(name || '').replace(/^.*[\\\/]/, '').replace(/\.txt$/i, '').replace(/^WhatsApp Chat with\s+/i, '').replace(/\s*\(\d+\)\s*$/, '').trim(); }
+function chatDateOrder_(text) {
+  var rx = /^\u200e?\[?(\d{1,2})\/(\d{1,2})\/(\d{2,4}),? \d{1,2}:\d{2}/gm, m, dm = true, ds = [], badDM = 0, badMD = 0, pd = null, pm = null, hardDM = false, hardMD = false, minDM = 1e12, maxDM = 0, minMD = 1e12, maxMD = 0;
+  while ((m = rx.exec(String(text || '')))) {
+    var a = +m[1], b = +m[2], y = +m[3]; if (y < 100) y += 2000;
+    if (a > 12) hardDM = true; if (b > 12) hardMD = true;
+    var d1 = y * 10000 + b * 100 + a, d2 = y * 10000 + a * 100 + b;
+    if (pd !== null && d1 < pd) badDM++; if (pm !== null && d2 < pm) badMD++; pd = d1; pm = d2;
+    var s1 = y * 372 + (b - 1) * 31 + a, s2 = y * 372 + (a - 1) * 31 + b;
+    minDM = Math.min(minDM, s1); maxDM = Math.max(maxDM, s1); minMD = Math.min(minMD, s2); maxMD = Math.max(maxMD, s2);
+  }
+  if (hardDM && !hardMD) return 'DM'; if (hardMD && !hardDM) return 'MD';
+  if (badMD !== badDM) return badMD < badDM ? 'MD' : 'DM';
+  if ((maxMD - minMD) !== (maxDM - minDM)) return (maxMD - minMD) < (maxDM - minDM) ? 'MD' : 'DM'; // a chat covers a short stretch of time
+  var t = new Date(), ts = t.getFullYear() * 372 + t.getMonth() * 31 + t.getDate() + 1; // still tied: the reading that is not in the future and is closest to today
+  var fDM = maxDM > ts, fMD = maxMD > ts;
+  if (fDM !== fMD) return fDM ? 'MD' : 'DM';
+  return Math.abs(ts - maxMD) < Math.abs(ts - maxDM) ? 'MD' : 'DM';
+}
+function splitChat_(text) {
+  var order = chatDateOrder_(text);
+  var re = /^‎?\[?(\d{4}\/\d{1,2}\/\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4}),? (\d{1,2}):(\d{2})(?::\d{2})?(?:\s?([AaPp])\.?[Mm]\.?)?\]?(?: -|:)? ([^:\n]+?): ([\s\S]*)$/, out = [], cur = null;
+  String(text || '').replace(/^﻿/, '').split(/\r?\n/).forEach(function (line) {
+    var m = re.exec(line);
+    if (m) {
+      var d = m[1].split('/'), y, mo, da;
+      if (d[0].length === 4) { y = +d[0]; mo = +d[1]; da = +d[2]; } else { if (order === 'MD') { mo = +d[0]; da = +d[1]; } else { da = +d[0]; mo = +d[1]; } y = +d[2]; if (y < 100) y += 2000; }
+      var hh = +m[2]; if (m[4]) { var pm = /p/i.test(m[4]); if (pm && hh < 12) hh += 12; if (!pm && hh === 12) hh = 0; }
+      cur = { date: y + '-' + pad_(mo) + '-' + pad_(da), time: pad_(hh) + ':' + m[3], sender: m[5].trim(), text: m[6] };
+      out.push(cur);
+    } else if (cur) cur.text += '\n' + line;
+  });
+  return out;
+}
+
+var ORDER_RX_ = /(?:^|\n)\s*(?:(?:also|and|plus|another|new)[,:]?\s+)?Collection (?:at|from)\s+([^\n]*?)\s*\.?\s*(?:\n\s*)?Delivery to\s*([\s\S]*)$/i;
+
+/* Reads who pays from words like "Receiver account" / "Select sender account". Returns '' when not said. */
+function whoPaysHint_(t) {
+  var r = /\b(select\s+)?receiver('s)?\s+(account|pays|to pay)\b|\bbill\s+(the\s+)?receiver\b/i.test(t), s = /\b(select\s+)?sender('s)?\s+(account|pays|to pay)\b|\bbill\s+(the\s+)?sender\b/i.test(t);
+  return r && !s ? 'Receiver' : s && !r ? 'Sender' : '';
+}
+function cleanPlace_(x) { return String(x || '').replace(/\b(please\s+)?(select\s+)?(receiver|sender)('s)?\s+(account|pays|to pay)\b\.?/ig, '').replace(/\s+/g, ' ').replace(/^[\s.,;:-]+|[\s.,;:-]+$/g, ''); }
+
+/* msgs from splitChat_. Returns { orders:[...], look:[...] } - every dispatcher message is either an order, "needs a look", or noise. */
+function parseOrders_(msgs, driverName) {
+  var orders = [], look = [], seen = {};
+  msgs.forEach(function (m, i) {
+    if (m.sender === driverName) return;               // the driver's own messages are never orders
+    var t = m.text.replace(/\s*<This message was edited>\s*$/i, '').replace(/^\s+|\s+$/g, '');
+    if (!t || /^<Media omitted>$/i.test(t) || /^This message was deleted$/i.test(t) || /^https?:\/\/\S+$/.test(t)) return;
+    var prev = i > 0 && msgs[i - 1].sender === m.sender ? msgs[i - 1].text : '', link = (/https?:\/\/(maps\.app\.goo\.gl|maps\.google\.com|goo\.gl\/maps|share\.google|g\.co)\S*/i.exec(prev) || [''])[0];
+    var x = ORDER_RX_.exec(t);
+    if (!x) { if (/collect|optel|opgaar|pick ?up|pickup|deliver(?:y)? to|aflewer|waybill/i.test(t) && t.length > 8) look.push({ date: m.date, time: m.time, text: t, maps: link, key: driverName + '|' + m.date + ' ' + m.time + '|L|' + hash_(t) }); return; }
+    var before = t.slice(0, x.index).trim(), coll = cleanPlace_(x[1]), rest = x[2].replace(/^\s+/, ''), dels = [], notes = [];
+    var lines = rest.split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return l; });
+    var numbered = lines.filter(function (l) { return /^\d+[.)]\s*\S/.test(l); });
+    if (numbered.length >= 2 || (numbered.length === 1 && /^\d+[.)]/.test(lines[0]))) {
+      lines.forEach(function (l) { if (/^\d+[.)]\s*\S/.test(l)) dels.push(cleanPlace_(l.replace(/^\d+[.)]\s*/, ''))); else notes.push(l); });
+    } else if (lines.length) { dels.push(cleanPlace_(lines[0])); notes = lines.slice(1); }
+    if (before) notes.unshift(before);
+    var hint = whoPaysHint_(t);
+    if (!dels.length || !dels[0]) dels = [''];
+    dels.forEach(function (d, k) {
+      var base = driverName + '|' + m.date + ' ' + m.time + '|' + hash_(t) + '|' + k;
+      seen[base] = (seen[base] || 0) + 1;
+      orders.push({ date: m.date, time: m.time, collection: coll, delivery: d, notes: notes.join(' | '), maps: link, whoPays: hint, key: base + '|' + seen[base] });
+    });
+  });
+  return { orders: orders, look: look };
+}
+
+/* ---------- WhatsApp import ---------- */
+function planImport(text, fileName, typedDriver, from) {
+  let driver = typedDriver || driverFromFile_(fileName); const msgs = splitChat_(text);
+  if (!msgs.length) throw new Error('I could not read any messages. Export the chat from WhatsApp with "Export chat" > "Without media" and choose the .txt file.');
+  const senders = {}; msgs.forEach(m => senders[m.sender] = (senders[m.sender] || 0) + 1);
+  if (!senders[driver]) {
+    const names = Object.keys(senders), low = driver.toLowerCase(); let found = '';
+    if (!typedDriver) { names.forEach(n => { if (!found && (n.toLowerCase() === low || low.indexOf(n.toLowerCase()) >= 0 || n.toLowerCase().indexOf(low) >= 0)) found = n; });
+      if (!found && names.length === 2) { const cnt = {}; msgs.forEach(m => { if (/Collection at/i.test(m.text)) cnt[m.sender] = (cnt[m.sender] || 0) + 1; }); found = (cnt[names[0]] || 0) <= (cnt[names[1]] || 0) ? names[0] : names[1]; } }
+    if (!found) throw new Error('"' + driver + '" does not appear as a sender in this chat. People in it: ' + names.join(', ') + '. Type the driver\'s name exactly as it appears.');
+    driver = found;
+  }
+  const parsed = parseOrders_(msgs, driver), existing = {}; ORDERS.forEach(o => { if (o.src_key) existing[o.src_key] = 1; });
+  const inWin = parsed.orders.filter(o => o.date >= from); let fresh = inWin.filter(o => !existing[o.key]), likely = 0;
+  const sigLeft = {}, stampOf = r => new Date(r).toLocaleString('sv-SE', { timeZone: 'Africa/Johannesburg' }).slice(0, 16);
+  ORDERS.forEach(o => { if (o.source !== 'WhatsApp' || !o.received) return; const k = stampOf(o.received); sigLeft[k] = (sigLeft[k] || 0) + 1; });
+  const pre = {}; inWin.forEach(o => { if (existing[o.key]) { const k = o.date + ' ' + o.time; pre[k] = (pre[k] || 0) + 1; } });
+  Object.keys(pre).forEach(k => sigLeft[k] = Math.max(0, (sigLeft[k] || 0) - pre[k]));
+  fresh = fresh.filter(o => { const k = o.date + ' ' + o.time; if (sigLeft[k] > 0) { sigLeft[k]--; likely++; return false; } return true; });
+  const look = parsed.look.filter(l => l.date >= from);
+  return { driver, messages: msgs.length, found: parsed.orders.length, inWin: inWin.length, fresh, likely, look, hints: fresh.filter(o => o.whoPays).length };
+}
+$('oimp').onclick = () => {
+  $('drawer').style.width = 'min(640px,100%)';
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Import WhatsApp chat</h3><p class="mute">In WhatsApp: open the chat with the driver, Export chat, Without media, then choose that .txt file here.</p><div class="frm"><label for="im_f">Chat file</label><input type="file" id="im_f" accept=".txt,text/plain"><label for="im_d">Driver name (leave blank to use the file name)</label><input type="text" id="im_d"><label for="im_from">Only messages from this date on (optional)</label><input type="date" id="im_from"><div class="row"><button class="btn" id="im_pv">Check file</button></div><div id="im_out"></div><p id="im_err" class="err"></p></div>';
+  let PLAN = null;
+  $('im_pv').onclick = async () => {
+    $('im_err').textContent = ''; $('im_out').innerHTML = ''; const f = $('im_f').files && $('im_f').files[0]; if (!f) { $('im_err').textContent = 'Choose the chat file first.'; return; }
+    try { PLAN = planImport(await f.text(), f.name, $('im_d').value.trim(), $('im_from').value || '0000-00-00'); } catch (e) { $('im_err').textContent = e.message; return; }
+    const p = PLAN; $('im_out').innerHTML = '<p>Driver: <b>' + esc(p.driver) + '</b> &middot; ' + p.messages + ' messages &middot; ' + p.inWin + ' orders in range</p><p><b>' + p.fresh.length + ' new order(s)</b> to add' + (p.inWin - p.fresh.length ? ', ' + (p.inWin - p.fresh.length) + ' already here' : '') + (p.likely ? ' (' + p.likely + ' look like duplicates)' : '') + (p.hints ? '. ' + p.hints + ' say who pays.' : '.') + '</p>' +
+      (p.fresh.length ? '<div class="card" style="max-height:30vh"><table><tbody>' + p.fresh.slice(0, 12).map(o => '<tr><td>' + esc(o.date + ' ' + o.time) + '</td><td>' + esc(o.collection) + '</td><td>' + esc(o.delivery) + '</td></tr>').join('') + '</tbody></table></div><div class="row" style="margin-top:10px"><button class="btn" id="im_go">Add ' + p.fresh.length + ' order(s)</button></div>' : '') +
+      (p.look.length ? '<details style="margin-top:10px"><summary class="mute">' + p.look.length + ' message(s) need a look (not read as orders)</summary>' + p.look.slice(0, 40).map(l => '<div class="mute" style="font-size:12px;margin:4px 0">' + esc(l.date + ' ' + l.time) + ': ' + esc(l.text.slice(0, 200)) + '</div>').join('') + '</details>' : '');
+    if ($('im_go')) $('im_go').onclick = async () => { $('im_err').textContent = 'Saving...'; const r = await sb.rpc('import_orders', { p: { driver: PLAN.driver, orders: PLAN.fresh.map(o => ({ date: o.date, time: o.time, collection: o.collection, delivery: o.delivery, notes: o.notes, maps: o.maps, who_pays: o.whoPays, key: o.key })) } }); if (r.error) { $('im_err').textContent = r.error.message; return; } await reloadInvoicing(); $('im_out').innerHTML = '<p><b>' + r.data + ' order(s) added.</b></p>'; $('im_err').textContent = ''; };
+  };
+  $('drawer').classList.remove('hide');
+};
+/* ---------- merge clients ---------- */
+function usageOf(id) { return { orders: ORDERS.filter(o => o.customer_id === id).length, invoices: INVOICES.filter(h => h.customer_id === id).length, rounds: CASHR.filter(r => r.customer_id === id).length }; }
+$('cmerge').onclick = () => {
+  const opts = CUSTS.slice().sort((a, b) => a.name.localeCompare(b.name)).map(c => '<option value="' + esc(c.customer_id) + '">' + esc(c.customer_id + ' ' + c.name + (c.active ? '' : ' (inactive)')) + '</option>').join('');
+  $('drawer').style.width = 'min(640px,100%)';
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Merge clients</h3><p class="mute">Everything belonging to the merged clients (orders, waybills, invoices, rules, cash rounds) moves to the one you keep. The merged client is then removed. Downloaded invoices keep their old name.</p><div class="frm"><label for="mg_k">Client to KEEP</label><select id="mg_k"><option value="">Choose...</option>' + opts + '</select><label for="mg_m">Client to merge into it (hold Ctrl to pick more than one)</label><select id="mg_m" multiple size="8">' + opts + '</select><div class="row"><button class="btn ghost" id="mg_pv">Check</button></div><div id="mg_out"></div><p id="mg_err" class="err"></p></div>';
+  $('mg_pv').onclick = () => {
+    const keep = $('mg_k').value, ids = Array.from($('mg_m').options).filter(o => o.selected).map(o => o.value).filter(x => x !== keep); $('mg_err').textContent = '';
+    if (!keep) { $('mg_err').textContent = 'Choose the client to keep.'; return; } if (!ids.length) { $('mg_err').textContent = 'Choose the client to merge into it.'; return; }
+    const k = CBY[keep], notes = [];
+    ids.forEach(id => { const m = CBY[id]; [['phones', 'Phone numbers'], ['email', 'Email'], ['bill_address', 'Bill address'], ['terms', 'Terms'], ['vat_number', 'VAT number']].forEach(f => { const a = String(k[f[0]] || '').trim(), b = String(m[f[0]] || '').trim(); if (a && b && a !== b) notes.push(f[1] + ' differs: ' + k.name + ' has "' + a + '", ' + m.name + ' has "' + b + '". ' + k.name + "'s is kept."); });
+      if (m.always_cash && !k.always_cash) notes.push(m.name + ' has Special Pricing Overrides but ' + k.name + ' does not. ' + k.name + "'s setting is used."); });
+    $('mg_out').innerHTML = '<p>Keep <b>' + esc(k.name) + '</b> (' + esc(keep) + '). Merge: ' + ids.map(id => '<b>' + esc(CBY[id].name) + '</b> (' + usageOf(id).orders + ' orders, ' + usageOf(id).invoices + ' invoices)').join('; ') + '.</p>' + notes.map(n => '<p class="mute">' + esc(n) + '</p>').join('') + '<div class="row"><button class="btn" id="mg_go">Merge now</button></div>';
+    $('mg_go').onclick = async () => { $('mg_err').textContent = 'Saving...'; const r = await sb.rpc('merge_customers', { p_keep: keep, p_merge: ids }); if (r.error) { $('mg_err').textContent = r.error.message; return; } await reloadInvoicing(); CUSTS = await fetchAll('customers', { col: 'name', asc: true }); CUSTS.forEach(c => CBY[c.customer_id] = c); Object.keys(CBY).forEach(id => { if (!CUSTS.some(c => c.customer_id === id)) delete CBY[id]; }); drawCustomers(); drawOrders(); $('mg_out').innerHTML = '<p><b>Merged.</b> Moved: ' + esc(JSON.stringify(r.data)) + '</p>'; $('mg_err').textContent = ''; };
+  };
+  $('drawer').classList.remove('hide');
+};
 start();
 </script>
 </body>
