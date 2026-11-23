@@ -65,6 +65,14 @@
   .cell.cancelled { background:#f87171; color:#450a0a; border-color:#b91c1c; } .cell.cancelled .num { text-decoration:line-through; }
   .cell.carried { background:#c4b5fd; color:#2e1065; border-color:#6d28d9; }
   .cell:has(input:checked) { border-color:var(--brand); box-shadow:0 0 0 2px var(--brand); }
+  .ordpage { background:#fff; border-radius:14px; padding:20px; } .ordpage h2 { margin:0 0 4px; font-size:28px; }
+  .hint { font-size:13px; color:var(--mute); } .orow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:10px 0; }
+  .ob { font:inherit; cursor:pointer; border:0; border-radius:8px; padding:8px 14px; background:#fff; color:var(--brand); font-weight:600; }
+  .ob.primary { background:var(--sky); color:var(--brand); } .ob.primary:hover { background:#5fd7ff; } .ob.primary.go { background:#4bdf7c; color:#052e16; } .ob.primary.wa { background:#25D366; color:#052e16; }
+  .ob.primary.save { background:#f99526; color:#3d2000; } .ob.ghost { background:#e5e7eb; color:#111; } .ob.danger { background:#b91c1c; color:#fff; } .ob:disabled { opacity:.45; cursor:not-allowed; }
+  .omsg { padding:10px 12px; border-radius:8px; margin:10px 0; font-size:14px; } .omsg.ok { background:#dcfce7; color:#14532d; } .omsg.err { background:#fee2e2; color:#7f1d1d; } .omsg.warn { background:#fef3c7; color:#78350f; }
+  .ordpage table th { text-transform:none; font-size:15px; letter-spacing:0; color:#1f2937; background:#fff; position:static; } .ordpage table td { vertical-align:top; }
+  .ordpage input[type=text] { padding:7px 9px; border:1px solid #cbd5e1; border-radius:8px; font:inherit; } .ordpage .opill { background:#e5e7eb; border-radius:99px; padding:2px 8px; font-size:12px; }
   .hide { display:none !important; }
   .frm label { display:block; margin:10px 0 3px; color:var(--mute); font-size:13px; }
   .frm input[type=text], .frm input[type=date], .frm select, .frm textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; }
@@ -99,13 +107,17 @@
   <main>
     <div id="noRole" class="msg hide"></div>
     <section id="ordersView" class="hide">
-      <div class="bar">
-        <input type="text" id="oq" placeholder="Search orders: waybill, customer, place, driver, invoice...">
-        <button class="btn" id="onew">+ New order</button><button class="btn ghost" id="oimp">Import WhatsApp chat</button><button class="btn ghost" id="ocancel">Cancel ticked orders</button>
-        <select id="ost"><option value="">All statuses</option><option>New</option><option>Assigned</option><option>Weighed</option><option>Invoiced</option><option>Cancelled</option></select>
-        <span class="count" id="ocount"></span>
+      <div class="ordpage">
+        <h2>Orders</h2>
+        <div class="hint">Dispatcher messages from WhatsApp become orders. Type the waybill number the driver wrote out, then the number of parcels and the weight. Who pays (sender or receiver) is the tick on the waybill.</div>
+        <div class="orow"><button class="ob primary wa" id="oimp">Import WhatsApp chat</button><button class="ob" id="onew">+ New order</button><button class="ob primary go" id="oall">Invoice all...</button><button class="ob ghost" id="osel">Select...</button></div>
+        <div id="oSelBar"></div>
+        <div id="oMsg"></div>
+        <datalist id="oc_list"></datalist>
+        <div class="orow" style="margin:6px 0"><b>Filter:</b><label>Driver <select id="of_drv"></select></label><label>Day <input type="date" id="of_day" min="2020-01-01" max="2100-12-31"></label><button class="ob ghost" id="of_today">Today</button><button class="ob ghost hide" id="of_clear">Clear filter</button><label class="hint" style="white-space:nowrap"><input type="checkbox" id="of_canc"> Show cancelled</label><input type="text" id="oq" placeholder="Search..." style="width:200px"></div>
+        <div class="orow" id="oTabs" style="margin:8px 0"></div>
+        <div id="oTable"></div>
       </div>
-      <div class="card"><table><thead><tr><th></th><th>Received</th><th>Order</th><th>Waybill</th><th>Customer</th><th>Collection</th><th>Delivery</th><th>Kg</th><th>Driver</th><th>Status</th><th>Invoice</th></tr></thead><tbody id="obody"></tbody></table></div>
     </section>
     <section id="invoicingView" class="hide">
       <div id="iGate"></div>
@@ -210,7 +222,7 @@ async function start() {
       $('noRole').classList.remove('hide'); $('ordersView').classList.add('hide'); return;
     }
     $('noRole').classList.add('hide');
-    $('obody').innerHTML = '<tr><td colspan="10" class="msg">Loading orders...</td></tr>';
+    $('oTable').innerHTML = '<div class="msg">Loading orders...</div>';
     let SET, AL;
     [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET, PERIODS, PRICING, RULES, INVOICES, INVLINES, CASHR] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false })]);
     SETTINGS = SET;
@@ -220,7 +232,7 @@ async function start() {
     CBY = {}; CUSTS.forEach(c => CBY[c.customer_id] = c);
     drawOrders(); drawCustomers(); drawShelf(); drawPricing(); drawInvoicing(); drawCash();
   } catch (e) {
-    show('app'); $('obody').innerHTML = '<tr><td colspan="10" class="msg err">Could not load: ' + esc(e.message || e) + '</td></tr>';
+    show('app'); $('oTable').innerHTML = '<div class="msg err">Could not load: ' + esc(e.message || e) + '</div>';
   }
 }
 
@@ -272,30 +284,123 @@ function dupMap_() {
   return out;
 }
 let DUPS = {};
+
+const ORD_TABS = [['New', 'To assign a waybill'], ['Assigned', 'Waiting for weight / parcels / client'], ['Weighed', 'Ready to invoice'], ['Closed', 'Invoiced'], ['All', 'All']];
+let OF = { tab: 'New', drv: '', day: '', canc: false, q: '' }, OSEL_ON = false, OSEL = {}, OSIDE = {}, OMSG = null;
+const odate = o => o.collection_date ? String(o.collection_date).slice(0, 10) : recvDay(o.received);
+const ordTime = s => s ? new Date(s).toLocaleString('sv-SE', { timeZone: 'Africa/Johannesburg' }).slice(0, 16) : '';
+const inTab = (o, t) => (o.status !== 'Cancelled' || OF.canc) && (t === 'All' || (t === 'Closed' ? (o.status === 'Invoiced' || o.status === 'Cancelled') : o.status === t));
+const inFilter = o => (!OF.drv || o.driver === OF.drv) && (!OF.day || odate(o) === OF.day) && (!OF.q || [o.order_id, o.waybill, custName(o.customer_id), o.collection, o.delivery, o.driver, o.invoice_no, o.notes].join(' ').toLowerCase().includes(OF.q));
+const omsg = (kind, text) => { OMSG = text ? { kind, text } : null; $('oMsg').innerHTML = OMSG ? '<div class="omsg ' + kind + '">' + esc(text) + '</div>' : ''; };
+const guessName = place => { const id = guessCust(place); return id && CBY[id] ? CBY[id].name : ''; };
+function ordSuggest(o) { if (o.who_pays) return o.who_pays; if (OSIDE[o.order_id]) return OSIDE[o.order_id]; if (guessCust(o.delivery) && !guessCust(o.collection)) return 'Receiver'; return 'Sender'; }
+function ordBillCell(o) {
+  const side = ordSuggest(o), place = side === 'Sender' ? o.collection : o.delivery, g = o.who_pays ? custName(o.customer_id) : (custName(o.customer_id) || guessName(place)), id = esc(o.order_id);
+  return '<span class="hint">' + (side === 'Sender' ? 'Collection party' : 'Delivery party') + '</span><br><input type="text" id="oc_' + id + '" data-row="' + id + '" list="oc_list" autocomplete="off" value="' + esc(g) + '" placeholder="' + esc((place || '?') + ' - pick client') + '" style="width:170px;margin:3px 0;color:#000;font-weight:700"><br>' +
+    (o.who_pays ? '<span class="opill" style="background:#16a34a;color:#fff">confirmed</span> ' : '<span class="hint">confirmed when you Save</span> ') + '<button class="ob ghost" data-act="rev" data-id="' + id + '">&#8644; Reverse</button>';
+}
+function dupBadge(o) {
+  const d = DUPS[o.order_id]; if (!d || !d.length) return '';
+  return d.map(b => { const label = (b.waybill ? 'WB' + b.waybill : b.order_id) + ' (' + b.order_id + ', ' + b.status + (b.customer_id ? ', ' + custName(b.customer_id) : '') + ')', mine = o.waybill != null, theirs = b.waybill != null;
+    const btn = !mine ? '<button class="ob primary save" data-act="merge" data-keep="' + esc(b.order_id) + '" data-drop="' + esc(o.order_id) + '">Same order - merge into ' + (theirs ? 'WB' + b.waybill : esc(b.order_id)) + '</button>' : (!theirs && b.status !== 'Invoiced' ? '<button class="ob primary save" data-act="merge" data-keep="' + esc(o.order_id) + '" data-drop="' + esc(b.order_id) + '">Same order - merge ' + esc(b.order_id) + ' into this one</button>' : '');
+    return '<div class="omsg warn" style="margin:4px 0;padding:4px 8px"><b>&#9888; Possible duplicate of ' + esc(label) + '</b> <span class="hint">' + esc((b.collection || '?') + ' -> ' + (b.delivery || '?')) + '</span><div class="orow" style="margin:3px 0 0">' + btn + '<button class="ob ghost" data-act="notdup" data-a="' + esc(o.order_id) + '" data-b="' + esc(b.order_id) + '">Not a duplicate</button></div></div>'; }).join('');
+}
+function ordRow(o) {
+  const closed = o.status === 'Invoiced' || o.status === 'Cancelled', id = esc(o.order_id), sur = Array.isArray(o.surcharges) ? o.surcharges : [], edit = canEdit();
+  const lead = '<tr id="orow_' + id + '" data-o="' + id + '"' + (OSEL_ON && OSEL[o.order_id] ? ' style="background:#fff3e0"' : '') + '>' + (OSEL_ON ? '<td>' + (closed ? '' : '<input type="checkbox" class="osel" data-id="' + id + '"' + (OSEL[o.order_id] ? ' checked' : '') + ' style="width:20px;height:20px">') + '</td>' : '') +
+    '<td style="white-space:nowrap">' + esc(ordTime(o.received)) + '<br><span class="hint">' + esc((o.driver || '').split(' ')[0]) + '</span></td><td><b>' + esc(o.collection || '?') + '</b> &rarr; ' + esc(o.delivery || '?') + (o.notes ? '<br><span class="hint">' + esc(String(o.notes).slice(0, 140)) + '</span>' : '') + dupBadge(o) + '</td>' +
+    '<td id="bt_' + id + '">' + (closed || !edit ? esc(custName(o.customer_id)) : ordBillCell(o)) + '</td>';
+  if (closed || !edit) return lead + '<td>' + esc(o.waybill) + '</td><td>' + esc(o.parcels) + '</td><td>' + esc(o.weight_kg) + (o.length_cm ? ' <span class="hint">' + (o.volumetric ? 'vol. ' : 'measured ') + o.length_cm + '&times;' + o.width_cm + '&times;' + o.height_cm + '</span>' : '') + '</td><td><span class="opill">' + esc(o.status) + '</span></td><td>' + (o.invoice_no ? '<b>' + esc(o.invoice_no) + '</b>' : '') + '</td></tr>';
+  const nm = c => { const p = PRODUCTS.find(x => x.product_code === c); return p ? p.name : c; };
+  return lead + '<td><input type="text" id="ow_' + id + '" data-row="' + id + '" value="' + esc(o.waybill) + '" inputmode="numeric" style="width:92px"></td><td><input type="text" id="ow_' + id + '_p" data-row="' + id + '" value="' + esc(o.parcels) + '" inputmode="numeric" style="width:56px"></td>' +
+    '<td style="white-space:nowrap"><input type="text" id="ow_' + id + '_w" data-row="' + id + '" value="' + esc(o.weight_kg) + '" inputmode="decimal" style="width:70px"' + (o.volumetric ? ' disabled' : '') + '>' +
+    '<br><label class="hint"><input type="checkbox" data-act="vol" data-id="' + id + '"' + (o.volumetric ? ' checked' : '') + '> volumetric</label><br><label class="hint"><input type="checkbox" data-act="sd" data-id="' + id + '"' + (o.same_day ? ' checked' : '') + '> same day</label><br><label class="hint"><input type="checkbox" data-act="sur" data-id="' + id + '"' + (sur.length ? ' checked' : '') + '> surcharge</label>' +
+    (sur.length ? '<br><span class="hint" style="color:#b45309">' + sur.map(x => esc(x.desc || nm(x.code))).join('; ') + '</span>' : '') + (o.length_cm ? '<br><span class="hint">' + (o.volumetric ? '' : 'measured ') + o.length_cm + '&times;' + o.width_cm + '&times;' + o.height_cm + ' cm</span>' : '') + '</td>' +
+    '<td style="white-space:nowrap"><button class="ob primary save" data-act="save" data-id="' + id + '">Save</button> <button class="ob" data-act="edit" data-id="' + id + '">Edit</button></td><td style="white-space:nowrap">' + (o.status === 'Weighed' ? '<button class="ob primary go" data-act="inv" data-id="' + id + '">Invoice</button>' : '') + '</td></tr>';
+}
 function drawOrders() {
   DUPS = dupMap_();
-  const q = $('oq').value.trim().toLowerCase(), st = $('ost').value;
-  const rows = ORDERS.filter(o => {
-    if (st && o.status !== st) return false;
-    if (!q) return true;
-    return [o.order_id, o.waybill, custName(o.customer_id), o.collection, o.delivery, o.driver, o.invoice_no, o.notes].join(' ').toLowerCase().includes(q);
-  });
-  $('ocount').textContent = rows.length + ' of ' + ORDERS.length;
-  const shown = rows.slice(0, 300);
-  $('obody').innerHTML = shown.length ? shown.map(o => '<tr class="click" data-o="' + esc(o.order_id) + '"><td>' + (canEdit() && o.status !== 'Invoiced' && o.status !== 'Cancelled' ? '<input type="checkbox" class="osel" data-o="' + esc(o.order_id) + '">' : '') + '</td><td>' + esc(fmtDT(o.received)) + '</td><td>' + esc(o.order_id) + '</td><td>' + esc(o.waybill) + '</td><td>' + esc(custName(o.customer_id)) + '</td><td>' + esc(o.collection) + '</td><td>' + esc(o.delivery) + '</td><td>' + esc(o.weight_kg) + '</td><td>' + esc(o.driver) + '</td><td><span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span>' + (DUPS[o.order_id] ? ' <span class="pill Weighed" title="Looks like another order">dup?</span>' : '') + '</td><td>' + esc(o.invoice_no) + '</td></tr>').join('') + (rows.length > shown.length ? '<tr><td colspan="11" class="msg">Showing the newest 300. Type in the search box to narrow it down.</td></tr>' : '') : '<tr><td colspan="11" class="msg">No orders found.</td></tr>';
+  const list = ORDERS.filter(o => inFilter(o) && inTab(o, OF.tab)), drv = {}; ORDERS.forEach(o => { if (o.driver) drv[o.driver] = 1; });
+  $('oc_list').innerHTML = CUSTS.filter(c => c.active).map(c => '<option value="' + esc(c.name) + '">').join('');
+  $('of_drv').innerHTML = '<option value="">All drivers</option>' + Object.keys(drv).sort().map(n => '<option value="' + esc(n) + '"' + (OF.drv === n ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
+  $('of_day').value = OF.day; $('of_canc').checked = OF.canc; $('of_clear').classList.toggle('hide', !(OF.drv || OF.day));
+  $('osel').textContent = OSEL_ON ? 'Done selecting' : 'Select...'; $('osel').className = 'ob ' + (OSEL_ON ? 'primary' : 'ghost');
+  const cnt = t => ORDERS.filter(o => inFilter(o) && inTab(o, t)).length;
+  $('oTabs').innerHTML = ORD_TABS.map(t => '<button class="ob' + (OF.tab === t[0] ? ' primary' : '') + '" data-act="tab" data-t="' + t[0] + '">' + t[1] + ' (' + cnt(t[0]) + ')</button>').join('');
+  const nsel = Object.keys(OSEL).length, open = list.filter(o => o.status !== 'Invoiced' && o.status !== 'Cancelled').length;
+  $('oSelBar').innerHTML = OSEL_ON ? '<div class="omsg warn"><b><span id="selcount">' + nsel + '</span> selected.</b> Tick orders in the list (invoiced and cancelled ones cannot be selected).<div class="orow" style="margin:4px 0 0"><button class="ob ghost" data-act="selall">Select all shown (' + open + ')</button><button class="ob ghost" data-act="selclear">Clear</button><button id="selinv" class="ob primary go" data-act="selinv"' + (nsel ? '' : ' disabled') + '>Invoice selected</button><button id="selcancel" class="ob danger" data-act="selcancel"' + (nsel ? '' : ' disabled') + '>Cancel selected</button></div></div>' : '';
+  const shown = list.slice(0, 400);
+  $('oTable').innerHTML = shown.length ? '<table><tr>' + (OSEL_ON ? '<th></th>' : '') + '<th>Received</th><th>Collection &rarr; Delivery</th><th>Bill to (client)</th><th>Waybill</th><th>Parcels</th><th>Weight kg</th><th></th><th>Invoice</th></tr>' + shown.map(ordRow).join('') + '</table>' + (list.length > shown.length ? '<div class="hint" style="padding:10px 0">Showing the newest ' + shown.length + ' of ' + list.length + '. Use the filters or search to narrow it down.</div>' : '') : '<div class="hint" style="padding:14px 0">Nothing here.</div>';
 }
+async function ordSave(id, p, okText) {
+  const r = await sb.rpc('save_order', { p: Object.assign({ order_id: id }, p) }); if (r.error) { omsg('err', r.error.message); return null; }
+  const saved = r.data; ORDERS = ORDERS.map(o => o.order_id === id ? saved : o);
+  if (saved.customer_id && saved.who_pays) { const pl = placeKey(saved.who_pays === 'Sender' ? saved.collection : saved.delivery); if (pl) ALIASES[pl] = saved.customer_id; }
+  delete OSIDE[id]; drawOrders(); drawShelf(); drawInvoicing(); omsg('ok', okText || ('Saved ' + id + (saved.waybill ? ' (waybill ' + saved.waybill + ')' : '') + ': ' + ({ New: 'still needs a waybill', Assigned: 'waiting for weight / parcels / client', Weighed: 'ready to invoice' }[saved.status] || saved.status) + '.')); return saved;
+}
+async function ordInline(id) {
+  const o = ORDERS.find(x => x.order_id === id); if (!o) return;
+  const p = { waybill: $('ow_' + id).value.trim(), parcels: $('ow_' + id + '_p').value.trim() }; if (!o.volumetric) p.weight_kg = $('ow_' + id + '_w').value.trim();
+  const cn = ($('oc_' + id).value || '').trim().toLowerCase();
+  if (cn) { const c = CUSTS.find(x => x.name.trim().toLowerCase() === cn); if (!c) { omsg('err', 'Pick the client from the list (or add the client on the Customers screen first).'); return; } p.customer_id = c.customer_id; p.who_pays = ordSuggest(o); }
+  else if (o.customer_id) { p.customer_id = ''; }
+  omsg('warn', 'Saving...'); await ordSave(id, p);
+}
+async function ordReverse(id) {
+  const o = ORDERS.find(x => x.order_id === id), other = ordSuggest(o) === 'Sender' ? 'Receiver' : 'Sender';
+  if (!o.who_pays) { OSIDE[id] = other; $('bt_' + id).innerHTML = ordBillCell(o); return; }
+  const cid = guessCust(other === 'Sender' ? o.collection : o.delivery);
+  const r = await ordSave(id, { who_pays: other, customer_id: cid || '' }, 'Reversed: now billing the ' + (other === 'Sender' ? 'collection' : 'delivery') + ' party' + (cid ? ' (' + custName(cid) + ').' : '.')); if (r && !cid) editOrder(id);
+}
+function openInvoiceFor(ids) {
+  const want = {}; ids.forEach(i => want[i] = 1); const gs = invoiceGroups('9999-12-31').groups.filter(g => g.ready.some(o => want[o.id]));
+  if (!gs.length) { omsg('err', 'Nothing here is ready to invoice yet. It needs a waybill, parcels, a weight (or a cash price), a client and who pays.'); return; }
+  if (gs.length === 1 && ids.length === 1) { if (gs[0].error && !gs[0].needCash) { omsg('err', gs[0].error); return; } tab('invoicing'); drawInvoicing(); if (!gs[0].error) previewInvoice(gs[0]); return; }
+  $('drawer').style.width = 'min(820px,100%)';
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Invoice selected</h3><div class="mute">Same client and collection date go on one invoice.</div><div class="card" style="margin:10px 0"><table><thead><tr><th>Client</th><th>Date</th><th>Waybills</th><th>Total</th></tr></thead><tbody>' + gs.map(g => '<tr><td>' + esc(g.cust.name) + '</td><td>' + esc(dmy_(g.date)) + '</td><td>' + esc(g.nums.join(', ')) + '</td><td>' + (g.error ? '<span class="err">' + esc(g.error) + '</span>' : 'R' + g.inv.total.toFixed(2)) + '</td></tr>').join('') + '</tbody></table></div><div class="row"><button class="btn" id="sv_go">Create ' + gs.filter(g => !g.error).length + ' invoice(s)</button></div><p id="sv_err" class="err"></p>';
+  $('sv_go').onclick = async () => { const ok = gs.filter(g => !g.error); if (!ok.length) return; const gaps = await gapInfo(ok); if (gaps.length && !confirm('WARNING: these waybill numbers are open but sit below a waybill you are about to invoice (skipped?):\n\n' + gaps.slice(0, 30).join(', ') + '\n\nPress OK to invoice anyway, or Cancel to go back.')) return; closeDrawer(); const r = await runInvoices(ok); OSEL = {}; drawOrders(); omsg(r.bad.length ? 'err' : 'ok', r.done.length + ' invoice(s) created: ' + r.done.join('; ') + (r.bad.length ? '. NOT done: ' + r.bad.join('; ') : '')); };
+  $('drawer').classList.remove('hide');
+}
+async function ordCancelSel() {
+  const ids = Object.keys(OSEL); if (!ids.length) return; if (!confirm('Cancel ' + ids.length + ' order' + (ids.length > 1 ? 's' : '') + '? They are hidden from the list (tick Show cancelled to see them). Any cash round matched to them is released.')) return;
+  const r = await sb.rpc('cancel_orders', { p_ids: ids }); if (r.error) { omsg('err', r.error.message); return; } OSEL = {}; await reloadInvoicing();
+  omsg('ok', 'Cancelled ' + r.data.cancelled + ' order' + (r.data.cancelled === 1 ? '' : 's') + '.' + (r.data.skipped && r.data.skipped.length ? ' Skipped: ' + r.data.skipped.join(', ') + '.' : ''));
+}
+function ordAct(e) {
+  const t = e.target, b = t.closest && t.closest('[data-act]'); if (t.classList && t.classList.contains('osel')) { if (t.checked) OSEL[t.dataset.id] = 1; else delete OSEL[t.dataset.id]; const n = Object.keys(OSEL).length; $('selcount').textContent = n; $('selinv').disabled = !n; $('selcancel').disabled = !n; const r = $('orow_' + t.dataset.id); if (r) r.style.background = t.checked ? '#fff3e0' : ''; return true; }
+  if (!b) return !!(t.closest && t.closest('input,select,textarea,label,button')); const a = b.dataset.act, id = b.dataset.id;
+  if (a === 'tab') { OF.tab = b.dataset.t; drawOrders(); } else if (a === 'save') ordInline(id); else if (a === 'edit') editOrder(id); else if (a === 'rev') ordReverse(id); else if (a === 'inv') openInvoiceFor([id]);
+  else if (a === 'vol' || a === 'sur') { t.checked = !t.checked; editOrder(id); omsg('warn', 'Fill in the ' + (a === 'vol' ? 'sizes' : 'surcharges') + ' in the order form, then Save.'); }
+  else if (a === 'sd') { ordSave(id, { same_day: t.checked }, t.checked ? 'Same Day ticked - it is billed at the Same Day price.' : 'Same Day removed.').then(r => { if (!r) drawOrders(); }); }
+  else if (a === 'merge') { if (confirm('Merge ' + b.dataset.drop + ' into ' + b.dataset.keep + '? ' + b.dataset.drop + ' is cancelled and its details are added to ' + b.dataset.keep + '.')) sb.rpc('merge_orders', { p_keep: b.dataset.keep, p_drop: b.dataset.drop }).then(async r => { if (r.error) omsg('err', r.error.message); else { await reloadInvoicing(); omsg('ok', 'Merged ' + b.dataset.drop + ' into ' + b.dataset.keep + '.'); } }); }
+  else if (a === 'notdup') sb.rpc('dismiss_duplicate', { p_a: b.dataset.a, p_b: b.dataset.b }).then(async r => { if (r.error) omsg('err', r.error.message); else { await reloadInvoicing(); omsg('ok', 'Noted - these two will not be flagged again.'); } });
+  else if (a === 'selall') { OSEL = {}; ORDERS.filter(o => inFilter(o) && inTab(o, OF.tab) && o.status !== 'Invoiced' && o.status !== 'Cancelled').forEach(o => OSEL[o.order_id] = 1); drawOrders(); }
+  else if (a === 'selclear') { OSEL = {}; drawOrders(); } else if (a === 'selinv') openInvoiceFor(Object.keys(OSEL)); else if (a === 'selcancel') ordCancelSel();
+  return true;
+}
+$('oSelBar').onclick = e => { ordAct(e); };
+$('oTabs').onclick = e => { ordAct(e); };
+$('oTable').onkeydown = e => { if (e.key === 'Enter' && e.target.dataset && e.target.dataset.row) ordInline(e.target.dataset.row); };
+$('osel').onclick = () => { OSEL_ON = !OSEL_ON; OSEL = {}; drawOrders(); };
+$('oall').onclick = () => tab('invoicing');
+$('of_drv').onchange = () => { OF.drv = $('of_drv').value; drawOrders(); };
+$('of_day').onchange = () => { const v = $('of_day').value; if (v && !(/^\d{4}-\d\d-\d\d$/.test(v) && +v.slice(0, 4) >= 2020)) return; OF.day = v; drawOrders(); };
+$('of_today').onclick = () => { OF.day = todayJ(); drawOrders(); };
+$('of_clear').onclick = () => { OF.drv = ''; OF.day = ''; drawOrders(); };
+$('of_canc').onchange = () => { OF.canc = $('of_canc').checked; drawOrders(); };
+$('oq').oninput = () => { OF.q = $('oq').value.trim().toLowerCase(); drawOrders(); };
 function drawCustomers() {
   const q = $('cq').value.trim().toLowerCase(), act = $('cact').checked;
   const rows = CUSTS.filter(c => (!act || c.active) && (!q || [c.customer_id, c.name, c.full_name, c.phones, c.email].join(' ').toLowerCase().includes(q)));
   $('ccount').textContent = rows.length + ' of ' + CUSTS.length;
   $('cbody').innerHTML = rows.length ? rows.slice(0, 400).map(c => '<tr class="click" data-c="' + esc(c.customer_id) + '"><td>' + esc(c.customer_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.phones) + '</td><td>' + esc(c.email) + '</td><td>' + esc(c.terms) + '</td><td>' + [c.always_cash ? 'Always cash' : '', c.invoice_per_waybill ? 'Invoice per waybill' : '', c.active ? '' : 'Inactive'].filter(x => x).map(x => '<span class="pill">' + x + '</span> ').join('') + '</td></tr>').join('') : '<tr><td colspan="6" class="msg">No customers found.</td></tr>';
 }
-$('oq').oninput = drawOrders; $('ost').onchange = drawOrders; $('cq').oninput = drawCustomers; $('cact').onchange = drawCustomers;
+$('cq').oninput = drawCustomers; $('cact').onchange = drawCustomers;
 
 function closeDrawer() { $('drawer').classList.add('hide'); $('drawer').style.width = ''; }
 function dl(pairs) { return '<dl>' + pairs.filter(p => p[1] !== '' && p[1] != null).map(p => '<dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd>').join('') + '</dl>'; }
-$('obody').onclick = e => {
-  if (e.target.closest && e.target.closest('.osel') && e.target.classList && e.target.classList.contains && e.target.classList.contains('osel')) return;
+$('oTable').onclick = e => {
+  if (ordAct(e)) return;
   const tr = e.target.closest('tr[data-o]'); if (!tr) return;
   const o = ORDERS.find(x => x.order_id === tr.dataset.o); if (!o) return;
   const sur = Array.isArray(o.surcharges) ? o.surcharges.map(s => typeof s === 'string' ? s : JSON.stringify(s)).join(', ') : '';
@@ -914,7 +1019,9 @@ async function runInvoices(groups) {
   $('iGo').disabled = true; const done = [], bad = [];
   for (const g of groups) { $('iMsg').innerHTML = '<p class="mute">Invoicing ' + (done.length + bad.length + 1) + ' of ' + groups.length + '...</p>'; const r = await sb.rpc('create_invoice', { p: invPayload(g) }); if (r.error) bad.push(g.cust.name + ' ' + dmy_(g.date) + ': ' + r.error.message); else done.push(r.data.number + ' ' + g.cust.name + ' R' + g.inv.total.toFixed(2)); }
   $('iGo').disabled = false; await reloadInvoicing();
+  const _r = { done, bad };
   $('iMsg').innerHTML = (done.length ? '<div class="card" style="padding:12px;margin:10px 0"><b>' + done.length + ' invoice(s) created:</b><br>' + done.map(esc).join('<br>') + '</div>' : '') + (bad.length ? '<div class="card" style="padding:12px;margin:10px 0;border-color:var(--bad)"><b class="err">Not done:</b><br>' + bad.map(esc).join('<br>') + '</div>' : '');
+  return _r;
 }
 async function previewInvoice(g) {
   const inv = g.inv, gaps = await gapInfo([g]), st = pricingState();
@@ -1089,12 +1196,6 @@ function dupSection(o) {
     if (r.error) { $('dup_err').textContent = r.error.message; return; } $('drawer').onclick = null; closeDrawer(); await reloadInvoicing();
   };
 }
-$('ocancel').onclick = async () => {
-  const ids = Array.from(document.querySelectorAll('.osel')).filter(c => c.checked).map(c => c.dataset.o); if (!ids.length) { alert('Tick the orders to cancel first.'); return; }
-  if (!confirm('Cancel ' + ids.length + ' order(s)?')) return;
-  const r = await sb.rpc('cancel_orders', { p_ids: ids }); if (r.error) { alert(r.error.message); return; } await reloadInvoicing();
-  if (r.data.skipped && r.data.skipped.length) alert('Cancelled ' + r.data.cancelled + '. Skipped: ' + r.data.skipped.join(', '));
-};
 /* ---------- still to invoice + waybill look-up ---------- */
 function compress_(nums) { const a = nums.slice().sort((x, y) => x - y), out = []; for (let i = 0; i < a.length;) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(j > i ? a[i] + '-' + a[j] : String(a[i])); i = j + 1; } return out.join(', '); }
 $('bneed').onclick = () => {
