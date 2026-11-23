@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bezwill Orders &amp; Customers</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root { --ink:#1f2933; --mute:#6b7785; --line:#dfe3e8; --bg:#f5f6f8; --brand:#1d5fa8; --ok:#1a7f4b; --warn:#b26a00; --bad:#b42318; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:10px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:5; }
+  header h1 { font-size:17px; margin:0 12px 0 0; }
+  .tab { border:1px solid var(--line); background:#fff; padding:7px 14px; border-radius:8px; cursor:pointer; font:inherit; }
+  .tab.on { background:var(--brand); color:#fff; border-color:var(--brand); }
+  .sp { flex:1; }
+  main { padding:16px; max-width:1300px; margin:0 auto; }
+  input, select, button { font:inherit; }
+  input[type=text], input[type=email], input[type=password], select { padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  .btn { padding:8px 14px; border:0; border-radius:8px; background:var(--brand); color:#fff; cursor:pointer; }
+  .btn.ghost { background:#fff; color:var(--ink); border:1px solid var(--line); }
+  .bar { display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap; align-items:center; }
+  .bar input[type=text] { flex:1; min-width:220px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; overflow:auto; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--mute); background:#fafbfc; position:sticky; top:0; }
+  tr.click { cursor:pointer; } tr.click:hover { background:#f0f5fb; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:99px; font-size:12px; background:#eef0f3; }
+  .pill.Invoiced { background:#e1f4ea; color:var(--ok); } .pill.Cancelled { background:#fde8e6; color:var(--bad); }
+  .pill.Weighed { background:#fff1d6; color:var(--warn); } .pill.New, .pill.Assigned { background:#e4eefa; color:var(--brand); }
+  .mute { color:var(--mute); } .msg { padding:30px; text-align:center; color:var(--mute); }
+  .err { color:var(--bad); }
+  #login { max-width:340px; margin:80px auto; background:#fff; padding:24px; border:1px solid var(--line); border-radius:12px; }
+  #login input { width:100%; margin:6px 0 12px; } #login h2 { margin-top:0; }
+  .drawer { position:fixed; top:0; right:0; bottom:0; width:min(460px,100%); background:#fff; border-left:1px solid var(--line); box-shadow:-8px 0 24px rgba(0,0,0,.08); padding:18px; overflow:auto; z-index:10; }
+  .drawer h3 { margin:0 0 4px; } .drawer dl { display:grid; grid-template-columns:140px 1fr; gap:6px 10px; margin:14px 0; }
+  .drawer dt { color:var(--mute); } .drawer dd { margin:0; word-break:break-word; }
+  .hide { display:none !important; }
+  .count { color:var(--mute); font-size:13px; }
+</style>
+</head>
+<body>
+
+<div id="login" class="hide">
+  <h2>Bezwill sign in</h2>
+  <label>Email<input id="em" type="email" autocomplete="username"></label>
+  <label>Password<input id="pw" type="password" autocomplete="current-password"></label>
+  <button class="btn" id="goLogin" style="width:100%">Sign in</button>
+  <p id="loginErr" class="err"></p>
+</div>
+
+<div id="app" class="hide">
+  <header>
+    <h1>Bezwill</h1>
+    <button class="tab on" id="tabOrders">Orders</button>
+    <button class="tab" id="tabCustomers">Customers</button>
+    <span class="sp"></span>
+    <span class="mute" id="who"></span>
+    <button class="btn ghost" id="out">Sign out</button>
+  </header>
+  <main>
+    <div id="noRole" class="msg hide"></div>
+    <section id="ordersView">
+      <div class="bar">
+        <input type="text" id="oq" placeholder="Search orders: waybill, customer, place, driver, invoice...">
+        <select id="ost"><option value="">All statuses</option><option>New</option><option>Assigned</option><option>Weighed</option><option>Invoiced</option><option>Cancelled</option></select>
+        <span class="count" id="ocount"></span>
+      </div>
+      <div class="card"><table><thead><tr><th>Received</th><th>Order</th><th>Waybill</th><th>Customer</th><th>Collection</th><th>Delivery</th><th>Kg</th><th>Driver</th><th>Status</th><th>Invoice</th></tr></thead><tbody id="obody"></tbody></table></div>
+    </section>
+    <section id="customersView" class="hide">
+      <div class="bar">
+        <input type="text" id="cq" placeholder="Search customers: name, number, phone, email...">
+        <label><input type="checkbox" id="cact" checked> Active only</label>
+        <span class="count" id="ccount"></span>
+      </div>
+      <div class="card"><table><thead><tr><th>ID</th><th>Name</th><th>Phones</th><th>Email</th><th>Terms</th><th>Flags</th></tr></thead><tbody id="cbody"></tbody></table></div>
+    </section>
+  </main>
+  <div id="drawer" class="drawer hide"></div>
+</div>
+
+<div id="boot" class="msg">Loading...</div>
+
+<script>
+const SUPABASE_URL = 'https://vbzuuqclmowcnsezxjeo.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_o8FNrGvKzQ6-SfxStPxpJQ_WsMHLAsv';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let ORDERS = [], CUSTS = [], CBY = {};
+
+/* read every row, 1000 at a time (Supabase hands out at most 1000 per request) */
+async function fetchAll(table, order) {
+  let all = [], from = 0;
+  for (;;) {
+    let q = sb.from(table).select('*').range(from, from + 999);
+    if (order) q = q.order(order.col, { ascending: order.asc, nullsFirst: false });
+    const { data, error } = await q;
+    if (error) throw error;
+    all = all.concat(data); if (data.length < 1000) return all; from += 1000;
+  }
+}
+
+function show(view) {
+  $('login').classList.toggle('hide', view !== 'login');
+  $('app').classList.toggle('hide', view !== 'app');
+  $('boot').classList.toggle('hide', view !== 'boot');
+}
+
+async function start() {
+  const { data } = await sb.auth.getSession();
+  if (!data.session) { show('login'); return; }
+  $('who').textContent = data.session.user.email;
+  show('boot');
+  try {
+    const role = await sb.rpc('my_role');
+    show('app');
+    if (role.error || !role.data) {
+      $('noRole').textContent = 'You are signed in, but this login has no access yet. Ask the admin to set up your profile.';
+      $('noRole').classList.remove('hide'); $('ordersView').classList.add('hide'); return;
+    }
+    $('noRole').classList.add('hide');
+    $('obody').innerHTML = '<tr><td colspan="10" class="msg">Loading orders...</td></tr>';
+    [CUSTS, ORDERS] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false })]);
+    CBY = {}; CUSTS.forEach(c => CBY[c.customer_id] = c);
+    drawOrders(); drawCustomers();
+  } catch (e) {
+    show('app'); $('obody').innerHTML = '<tr><td colspan="10" class="msg err">Could not load: ' + esc(e.message || e) + '</td></tr>';
+  }
+}
+
+$('goLogin').onclick = async () => {
+  $('loginErr').textContent = '';
+  const { error } = await sb.auth.signInWithPassword({ email: $('em').value.trim(), password: $('pw').value });
+  if (error) { $('loginErr').textContent = 'Sign in failed: ' + error.message; return; }
+  start();
+};
+$('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('goLogin').click(); });
+$('out').onclick = async () => { await sb.auth.signOut(); ORDERS = []; CUSTS = []; show('login'); };
+
+function tab(which) {
+  $('ordersView').classList.toggle('hide', which !== 'orders');
+  $('customersView').classList.toggle('hide', which !== 'customers');
+  $('tabOrders').classList.toggle('on', which === 'orders'); $('tabCustomers').classList.toggle('on', which === 'customers');
+  closeDrawer();
+}
+$('tabOrders').onclick = () => tab('orders'); $('tabCustomers').onclick = () => tab('customers');
+
+const fmtDT = s => s ? new Date(s).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'short' }) : '';
+const fmtD = s => s ? String(s).slice(0, 10) : '';
+const custName = id => (id && CBY[id]) ? CBY[id].name : '';
+
+function drawOrders() {
+  const q = $('oq').value.trim().toLowerCase(), st = $('ost').value;
+  const rows = ORDERS.filter(o => {
+    if (st && o.status !== st) return false;
+    if (!q) return true;
+    return [o.order_id, o.waybill, custName(o.customer_id), o.collection, o.delivery, o.driver, o.invoice_no, o.notes].join(' ').toLowerCase().includes(q);
+  });
+  $('ocount').textContent = rows.length + ' of ' + ORDERS.length;
+  const shown = rows.slice(0, 300);
+  $('obody').innerHTML = shown.length ? shown.map(o => '<tr class="click" data-o="' + esc(o.order_id) + '"><td>' + esc(fmtDT(o.received)) + '</td><td>' + esc(o.order_id) + '</td><td>' + esc(o.waybill) + '</td><td>' + esc(custName(o.customer_id)) + '</td><td>' + esc(o.collection) + '</td><td>' + esc(o.delivery) + '</td><td>' + esc(o.weight_kg) + '</td><td>' + esc(o.driver) + '</td><td><span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span></td><td>' + esc(o.invoice_no) + '</td></tr>').join('') + (rows.length > shown.length ? '<tr><td colspan="10" class="msg">Showing the newest 300. Type in the search box to narrow it down.</td></tr>' : '') : '<tr><td colspan="10" class="msg">No orders found.</td></tr>';
+}
+function drawCustomers() {
+  const q = $('cq').value.trim().toLowerCase(), act = $('cact').checked;
+  const rows = CUSTS.filter(c => (!act || c.active) && (!q || [c.customer_id, c.name, c.full_name, c.phones, c.email].join(' ').toLowerCase().includes(q)));
+  $('ccount').textContent = rows.length + ' of ' + CUSTS.length;
+  $('cbody').innerHTML = rows.length ? rows.slice(0, 400).map(c => '<tr class="click" data-c="' + esc(c.customer_id) + '"><td>' + esc(c.customer_id) + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.phones) + '</td><td>' + esc(c.email) + '</td><td>' + esc(c.terms) + '</td><td>' + [c.always_cash ? 'Always cash' : '', c.invoice_per_waybill ? 'Invoice per waybill' : '', c.active ? '' : 'Inactive'].filter(x => x).map(x => '<span class="pill">' + x + '</span> ').join('') + '</td></tr>').join('') : '<tr><td colspan="6" class="msg">No customers found.</td></tr>';
+}
+$('oq').oninput = drawOrders; $('ost').onchange = drawOrders; $('cq').oninput = drawCustomers; $('cact').onchange = drawCustomers;
+
+function closeDrawer() { $('drawer').classList.add('hide'); }
+function dl(pairs) { return '<dl>' + pairs.filter(p => p[1] !== '' && p[1] != null).map(p => '<dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd>').join('') + '</dl>'; }
+$('obody').onclick = e => {
+  const tr = e.target.closest('tr[data-o]'); if (!tr) return;
+  const o = ORDERS.find(x => x.order_id === tr.dataset.o); if (!o) return;
+  const sur = Array.isArray(o.surcharges) ? o.surcharges.map(s => typeof s === 'string' ? s : JSON.stringify(s)).join(', ') : '';
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Order ' + esc(o.order_id) + '</h3><span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span>' +
+    dl([['Received', fmtDT(o.received)], ['Customer', custName(o.customer_id)], ['Who pays', o.who_pays], ['Waybill', o.waybill], ['Collection', o.collection], ['Delivery', o.delivery], ['Collection date', fmtD(o.collection_date)], ['Driver', o.driver], ['Source', o.source], ['Weight (kg)', o.weight_kg], ['Parcels', o.parcels], ['Volumetric', o.volumetric ? ('Yes: ' + [o.length_cm, o.width_cm, o.height_cm].join(' x ') + ' cm') : ''], ['Surcharges', sur], ['Same day', o.same_day ? 'Yes' : ''], ['Cash', o.cash_paid ? 'Paid cash' : ''], ['Cash price', o.cash_price], ['Extra discount %', o.extra_discount], ['Invoice', o.invoice_no], ['Notes', o.notes], ['Map link', o.maps_link], ['Last changed', fmtDT(o.updated_at) + (o.updated_by ? ' by ' + o.updated_by : '')]]);
+  $('drawer').classList.remove('hide');
+};
+$('cbody').onclick = e => {
+  const tr = e.target.closest('tr[data-c]'); if (!tr) return;
+  const c = CBY[tr.dataset.c]; if (!c) return;
+  const n = ORDERS.filter(o => o.customer_id === c.customer_id).length;
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">' + esc(c.name) + '</h3><span class="mute">' + esc(c.customer_id) + '</span>' +
+    dl([['Full name', c.full_name], ['Phones', c.phones], ['Email', c.email], ['Billing address', c.bill_address], ['Terms', c.terms], ['VAT number', c.vat_number], ['Always cash', c.always_cash ? 'Yes' : ''], ['Invoice per waybill', c.invoice_per_waybill ? 'Yes' : ''], ['Active', c.active ? 'Yes' : 'No'], ['Orders on file', n]]);
+  $('drawer').classList.remove('hide');
+};
+
+start();
+</script>
+</body>
+</html>
