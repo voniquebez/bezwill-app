@@ -66,6 +66,7 @@
     <button class="tab on" id="tabOrders">Orders</button>
     <button class="tab" id="tabBooks">Waybill books</button>
     <button class="tab" id="tabCustomers">Customers</button>
+    <button class="tab" id="tabPricing">Pricing &amp; setup</button>
     <span class="sp"></span>
     <span class="mute" id="who"></span>
     <button class="btn ghost" id="out">Sign out</button>
@@ -90,6 +91,20 @@
       </div>
       <div id="shelf" class="shelf"></div>
     </section>
+    <section id="pricingView" class="hide">
+      <div id="pBanner"></div>
+      <div id="pFuel"></div>
+      <h3>Price list <span class="mute" id="pPeriod" style="font-weight:400;font-size:13px"></span></h3>
+      <div class="card"><table><thead><tr><th>Code</th><th>Name</th><th>VAT %</th><th>Type</th><th>Price (ex VAT)</th><th>Per kg over 5kg</th><th>Active</th></tr></thead><tbody id="pBody"></tbody></table></div>
+      <div class="bar" style="margin-top:10px" id="pBar"></div>
+      <p id="pErr" class="err"></p>
+      <h3>Discount rules</h3>
+      <div class="bar"><button class="btn" id="rnew">+ New rule</button></div>
+      <div class="card"><table><thead><tr><th>Rule</th><th>Name</th><th>Customers</th><th>Products</th><th>Weight</th><th>Discount</th><th></th></tr></thead><tbody id="rBody"></tbody></table></div>
+      <h3>Drivers</h3>
+      <div class="bar"><button class="btn" id="dnew">+ New driver</button></div>
+      <div class="card"><table><thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Email</th><th>Role</th><th>Books out</th><th></th></tr></thead><tbody id="dBody"></tbody></table></div>
+    </section>
     <section id="customersView" class="hide">
       <div class="bar">
         <input type="text" id="cq" placeholder="Search customers: name, number, phone, email...">
@@ -111,7 +126,7 @@ const SUPABASE_KEY = 'sb_publishable_o8FNrGvKzQ6-SfxStPxpJQ_WsMHLAsv';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let ORDERS = [], CUSTS = [], CBY = {}, TERMS = [], DRIVERS = [], ROLE = null, ALIASES = {}, PRODUCTS = [], BOOKS = [], WBS = [], CURMONTH = '', SHELF = 'on';
+let ORDERS = [], CUSTS = [], CBY = {}, TERMS = [], DRIVERS = [], ROLE = null, ALIASES = {}, PRODUCTS = [], BOOKS = [], WBS = [], CURMONTH = '', SHELF = 'on', PERIODS = [], PRICING = [], RULES = [], SETTINGS = [];
 
 /* read every row, 1000 at a time (Supabase hands out at most 1000 per request) */
 async function fetchAll(table, order) {
@@ -147,12 +162,13 @@ async function start() {
     $('noRole').classList.add('hide');
     $('obody').innerHTML = '<tr><td colspan="10" class="msg">Loading orders...</td></tr>';
     let SET, AL;
-    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null)]);
+    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET, PERIODS, PRICING, RULES] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null)]);
+    SETTINGS = SET;
     ALIASES = {}; AL.forEach(a => ALIASES[a.place] = a.customer_id); CURMONTH = (SET.find(x => x.key === 'CurrentMonth') || {}).value || '';
     $('bnew').classList.toggle('hide', !canEdit());
     $('cnew').classList.toggle('hide', !canEdit()); $('onew').classList.toggle('hide', !canEdit());
     CBY = {}; CUSTS.forEach(c => CBY[c.customer_id] = c);
-    drawOrders(); drawCustomers(); drawShelf();
+    drawOrders(); drawCustomers(); drawShelf(); drawPricing();
   } catch (e) {
     show('app'); $('obody').innerHTML = '<tr><td colspan="10" class="msg err">Could not load: ' + esc(e.message || e) + '</td></tr>';
   }
@@ -168,13 +184,14 @@ $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('goLogin').c
 $('out').onclick = async () => { await sb.auth.signOut(); ORDERS = []; CUSTS = []; show('login'); };
 
 function tab(which) {
+  $('pricingView').classList.toggle('hide', which !== 'pricing'); $('tabPricing').classList.toggle('on', which === 'pricing');
   $('booksView').classList.toggle('hide', which !== 'books'); $('tabBooks').classList.toggle('on', which === 'books');
   $('ordersView').classList.toggle('hide', which !== 'orders');
   $('customersView').classList.toggle('hide', which !== 'customers');
   $('tabOrders').classList.toggle('on', which === 'orders'); $('tabCustomers').classList.toggle('on', which === 'customers');
   closeDrawer();
 }
-$('tabOrders').onclick = () => tab('orders'); $('tabBooks').onclick = () => tab('books'); $('tabCustomers').onclick = () => tab('customers');
+$('tabOrders').onclick = () => tab('orders'); $('tabPricing').onclick = () => tab('pricing'); $('tabBooks').onclick = () => tab('books'); $('tabCustomers').onclick = () => tab('customers');
 
 const fmtDT = s => s ? new Date(s).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'short' }) : '';
 const fmtD = s => s ? String(s).slice(0, 10) : '';
@@ -373,6 +390,145 @@ $('bnew').onclick = () => {
   };
   $('drawer').classList.remove('hide');
 };
+
+/* ---------- pricing & setup ---------- */
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const r2 = x => Math.round(x * 100) / 100, pad2 = n => String(n).padStart(2, '0');
+const todayJ = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
+const dlabel = ymd => { const p = ymd.split('-'), d = new Date(+p[0], +p[1] - 1, +p[2]); return DAYS[d.getDay()] + ' ' + d.getDate() + ' ' + MONS[d.getMonth()] + ' ' + d.getFullYear(); };
+function firstWed(y, m) { const d = new Date(y, m - 1, 1); while (d.getDay() !== 3) d.setDate(d.getDate() + 1); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+const setting = (k, d) => { const x = SETTINGS.find(s => s.key === k); return x ? x.value : d; };
+function priceMap(pid) { const m = {}; PRICING.filter(x => x.period_id === pid).forEach(x => m[x.product_code] = { price: Number(x.price), perKg: x.per_kg == null ? '' : Number(x.per_kg) }); return m; }
+function pricingState() {
+  const t = todayJ(), y = +t.slice(0, 4), mo = +t.slice(5, 7), fw = firstWed(y, mo);
+  const confirmed = PERIODS.some(p => String(p.effective_from).slice(0, 10) === fw && p.confirmed), due = t >= fw && !confirmed;
+  const md = t.slice(5), annualDone = setting('AnnualDone:' + y, 'FALSE') === 'TRUE';
+  const annual = (md >= '03-25' && md <= '04-30' && !annualDone) ? { show: true, year: y, overdue: md >= '04-01' } : { show: false, year: y };
+  return { today: t, periodId: fw, confirmed, due, annual };
+}
+function currentPeriod() { let cur = null; PERIODS.slice().sort((a, b) => String(a.effective_from) < String(b.effective_from) ? -1 : 1).forEach(p => { if (PRICING.some(x => x.period_id === p.period_id)) cur = p; }); return cur; }
+function ratioLines(prods, prices) {
+  const role = {}, out = []; prods.forEach(p => { if (p.role) role[p.role] = p.product_code; });
+  const g = r => { const x = role[r] && prices[role[r]]; return x && Number(x.price) > 0 ? Number(x.price) : 0; };
+  const c = g('Courier'), l = g('FuelLevy'), sd = g('SameDay'), sl = g('SameDayLevy');
+  if (c > 0 && l > 0) { const lp = Math.round(100 * l / (c + l)); out.push('Courier fee R' + c.toFixed(2) + ' (' + (100 - lp) + '%) / Fuel levy R' + l.toFixed(2) + ' (' + lp + '%)'); }
+  if (sd > 0 && sl > 0) { const sp = Math.round(100 * sl / (sd + sl)); out.push('Same Day R' + (sd + sl).toFixed(2) + ' total: basic R' + sd.toFixed(2) + ' (' + (100 - sp) + '%) / fuel levy R' + sl.toFixed(2) + ' (' + sp + '%)'); }
+  return out;
+}
+/* the monthly update: only the fuel levy moves with the fuel price; Same Day stays a fixed total split in the Courier:Levy ratio */
+function computeFuel(prods, old, oldFuel, newFuel, sdTotal) {
+  const ratio = newFuel / oldFuel, np = {}, role = {}, warn = {};
+  prods.forEach(p => { if (p.role) role[p.role] = p.product_code; if (old[p.product_code]) np[p.product_code] = { price: old[p.product_code].price, perKg: old[p.product_code].perKg }; });
+  prods.forEach(p => { if (p.role === 'FuelLevy' && np[p.product_code]) { const c = p.product_code; if (np[c].price > 0) np[c].price = r2(old[c].price * ratio); if (np[c].perKg > 0) np[c].perKg = r2(old[c].perKg * ratio); } });
+  if (role.SameDay && role.SameDayLevy && np[role.SameDay] && np[role.SameDayLevy]) {
+    const c = role.Courier && np[role.Courier] ? np[role.Courier].price : 0, l = role.FuelLevy && np[role.FuelLevy] ? np[role.FuelLevy].price : 0;
+    if (c > 0 && l > 0) { const levy = r2(sdTotal * l / (c + l)); np[role.SameDayLevy].price = levy; np[role.SameDay].price = r2(sdTotal - levy); }
+    else warn[role.SameDay] = 'Could not split Same Day: set the Courier and Fuel Levy types and prices first.';
+  }
+  return prods.filter(p => np[p.product_code]).map(p => ({ code: p.product_code, name: p.name, oldPrice: old[p.product_code].price, newPrice: np[p.product_code].price, oldPerKg: old[p.product_code].perKg, newPerKg: np[p.product_code].perKg, warn: warn[p.product_code] || '' }));
+}
+let PREVIEW = null;
+function drawPricing() {
+  const st = pricingState(), cur = currentPeriod(), admin = ROLE === 'admin';
+  let ban = '';
+  if (st.due) ban += '<div class="card" style="padding:12px;margin-bottom:12px;border-color:var(--warn);background:#fff8ea"><b>Prices for ' + esc(dlabel(st.periodId)) + ' are not set yet.</b> Enter the new fuel price below before invoicing.</div>';
+  else ban += '<div class="card" style="padding:12px;margin-bottom:12px"><span class="pill Invoiced">OK</span> Prices for this month are set' + (cur ? ' (in force since ' + esc(dlabel(String(cur.effective_from).slice(0, 10))) + ', fuel R' + Number(cur.fuel_price).toFixed(2) + ')' : '') + '.</div>';
+  if (st.annual.show) ban += '<div class="card" style="padding:12px;margin-bottom:12px;border-color:var(--warn);background:#fff8ea">' + (st.annual.overdue ? 'The annual rate update for 1 April ' + st.annual.year + ' has not been done.' : 'Reminder: update the annual rates now. They take effect on 1 April ' + st.annual.year + '.') + ' Change the prices in the list below, then click <b>Apply annual update</b>.</div>';
+  $('pBanner').innerHTML = ban;
+  // fuel box
+  $('pFuel').innerHTML = (admin && st.due) ? '<div class="card" style="padding:12px;margin-bottom:12px"><b>Monthly fuel update for ' + esc(dlabel(st.periodId)) + '</b><div class="bar" style="margin-top:8px"><input type="text" id="fuelNew" placeholder="New fuel price, e.g. 32.05" style="max-width:220px"><button class="btn" id="fuelPrev">Preview</button></div><div id="fuelOut"></div></div>' : '';
+  if (admin && st.due) $('fuelPrev').onclick = fuelPreview;
+  $('pPeriod').textContent = cur ? '(' + dlabel(String(cur.effective_from).slice(0, 10)) + ')' : '';
+  const pm = cur ? priceMap(cur.period_id) : {}, rows = PRODUCTS.slice().sort((a, b) => (a.role ? 0 : 1) - (b.role ? 0 : 1) || a.product_code.localeCompare(b.product_code));
+  const dis = admin ? '' : ' disabled';
+  const tr = (p, i) => { const x = p ? pm[p.product_code] || {} : {}; return '<tr data-i="' + i + '"><td><input type="text" class="pc" value="' + esc(p ? p.product_code : '') + '"' + (p ? ' disabled' : dis) + ' style="width:150px"></td><td><input type="text" class="pn" value="' + esc(p ? p.name : '') + '"' + dis + ' style="width:230px"></td><td><input type="text" class="pv" value="' + esc(p ? p.vat_rate : '15') + '"' + dis + ' style="width:50px"></td><td><select class="pr"' + dis + '>' + ['', 'Courier', 'FuelLevy', 'SameDay', 'SameDayLevy'].map(r => '<option value="' + r + '"' + ((p ? p.role : '') === r ? ' selected' : '') + '>' + (r || '-') + '</option>').join('') + '</select></td><td><input type="text" class="pp" value="' + esc(x.price == null ? '' : x.price) + '"' + dis + ' style="width:90px"></td><td><input type="text" class="pk" value="' + esc(x.perKg == null ? '' : x.perKg) + '"' + dis + ' style="width:90px"></td><td><input type="checkbox" class="pa"' + (!p || p.active !== false ? ' checked' : '') + dis + '></td></tr>'; };
+  $('pBody').innerHTML = rows.map((p, i) => tr(p, i)).join('');
+  const ratios = cur ? ratioLines(PRODUCTS, pm) : [];
+  $('pBar').innerHTML = (admin ? '<button class="tab" id="pAdd">+ Add product</button> <label>Same Day total R <input type="text" id="pSD" value="' + esc(setting('SameDayTotal', '1800')) + '" style="width:80px"></label> <button class="btn" id="pSave">Save price list</button>' + (st.annual.show ? ' <button class="btn ghost" id="pAnn">Apply annual update</button>' : '') : '<span class="mute">Only an admin can change prices.</span>') + (ratios.length ? '<div class="mute" style="width:100%;margin-top:6px">' + ratios.map(esc).join('<br>') + '</div>' : '');
+  if (admin) {
+    $('pAdd').onclick = () => { $('pBody').insertAdjacentHTML('beforeend', tr(null, 999)); };
+    $('pSave').onclick = savePriceList;
+    if (st.annual.show) $('pAnn').onclick = annualUpdate;
+  }
+  // rules
+  const cn = r => r.all_customers ? 'All customers' : (r.customer_ids || []).map(id => custName(id) || id).join(', ');
+  $('rBody').innerHTML = RULES.length ? RULES.slice().sort((a, b) => a.rule_id.localeCompare(b.rule_id)).map(r => '<tr class="click" data-r="' + esc(r.rule_id) + '"><td>' + esc(r.rule_id) + '</td><td>' + esc(r.name) + (r.active ? '' : ' <span class="pill">off</span>') + '</td><td>' + esc(cn(r)) + '</td><td>' + esc((r.product_codes || []).join(', ') || 'All products') + '</td><td>' + esc(r.min_kg != null || r.max_kg != null ? (r.min_kg != null ? 'from ' + r.min_kg : '') + (r.max_kg != null ? ' under ' + r.max_kg : '') + ' kg' : 'Any') + '</td><td>' + esc(r.discount_pct) + '%</td><td></td></tr>').join('') : '<tr><td colspan="7" class="msg">No rules.</td></tr>';
+  $('rnew').classList.toggle('hide', !admin);
+  const out = {}; BOOKS.forEach(b => { if (b.holder) out[b.holder.toLowerCase()] = (out[b.holder.toLowerCase()] || 0) + 1; });
+  $('dBody').innerHTML = DRIVERS.slice().sort((a, b) => String(a.driver_id).localeCompare(String(b.driver_id))).map(d => '<tr class="click" data-d="' + esc(d.driver_id) + '"><td>' + esc(d.driver_id) + '</td><td>' + esc(d.name) + (d.active === false ? ' <span class="pill">inactive</span>' : '') + '</td><td>' + esc(d.phone) + '</td><td>' + esc(d.email) + '</td><td>' + esc(d.role) + '</td><td>' + (out[String(d.name).toLowerCase()] || 0) + '</td><td></td></tr>').join('');
+  $('dnew').classList.toggle('hide', !canEdit());
+}
+function fuelPreview() {
+  const st = pricingState(), nf = Number(String($('fuelNew').value).replace(',', '.')), out = $('fuelOut'); PREVIEW = null;
+  if (!(nf > 0)) { out.innerHTML = '<p class="err">Enter the new fuel price in rand per litre, e.g. 32.05</p>'; return; }
+  let prev = null; PERIODS.slice().sort((a, b) => String(a.effective_from) < String(b.effective_from) ? -1 : 1).forEach(p => { if (String(p.effective_from).slice(0, 10) < st.periodId && p.confirmed) prev = p; });
+  let base = null; PERIODS.slice().sort((a, b) => String(a.effective_from) < String(b.effective_from) ? -1 : 1).forEach(p => { if (String(p.effective_from).slice(0, 10) < st.periodId && PRICING.some(x => x.period_id === p.period_id)) base = p; });
+  if (!prev) { out.innerHTML = '<p class="err">No previous fuel price on record.</p>'; return; }
+  if (!base) { out.innerHTML = '<p class="err">Enter your current prices in the price list first.</p>'; return; }
+  if (!PRODUCTS.some(p => p.role === 'FuelLevy')) { out.innerHTML = '<p class="err">Mark which product is the Fuel Levy (Type column), save, then try again.</p>'; return; }
+  const rows = computeFuel(PRODUCTS, priceMap(base.period_id), Number(prev.fuel_price), nf, Number(setting('SameDayTotal', '1800')) || 1800);
+  const changed = rows.filter(r => r.oldPrice !== r.newPrice || r.oldPerKg !== r.newPerKg), pct = r2((nf / Number(prev.fuel_price) - 1) * 100);
+  const np = {}; rows.forEach(r => np[r.code] = { price: r.newPrice, perKg: r.newPerKg });
+  const note = 'Fuel R' + nf.toFixed(2) + ' (' + (pct > 0 ? '+' : '') + pct.toFixed(2) + '% vs R' + Number(prev.fuel_price).toFixed(2) + '). ' + ratioLines(PRODUCTS, np).join('. ');
+  PREVIEW = { period_id: st.periodId, new_fuel: nf, note, rows: rows.map(r => ({ code: r.code, price: r.newPrice, per_kg: r.newPerKg === '' ? '' : r.newPerKg })) };
+  out.innerHTML = '<p>Fuel moves from <b>R' + Number(prev.fuel_price).toFixed(2) + '</b> to <b>R' + nf.toFixed(2) + '</b> (' + (pct > 0 ? '+' : '') + pct + '%).</p>' +
+    (changed.length ? '<div class="card"><table><thead><tr><th>Product</th><th>Old price</th><th>New price</th><th>Old per kg</th><th>New per kg</th></tr></thead><tbody>' + changed.map(r => '<tr><td>' + esc(r.name) + (r.warn ? '<div class="err">' + esc(r.warn) + '</div>' : '') + '</td><td>' + r.oldPrice.toFixed(2) + '</td><td><b>' + r.newPrice.toFixed(2) + '</b></td><td>' + (r.oldPerKg === '' ? '' : r.oldPerKg) + '</td><td><b>' + (r.newPerKg === '' ? '' : r.newPerKg) + '</b></td></tr>').join('') + '</tbody></table></div>' : '<p class="mute">No prices change.</p>') +
+    '<div class="mute">' + esc(ratioLines(PRODUCTS, np).join(' | ')) + '</div><div class="bar" style="margin-top:10px"><button class="btn" id="fuelApply">Apply for ' + esc(dlabel(st.periodId)) + '</button></div><p id="fuelErr" class="err"></p>';
+  $('fuelApply').onclick = async () => { $('fuelErr').textContent = 'Saving...'; const r = await sb.rpc('apply_fuel_update', { p: PREVIEW }); if (r.error) { $('fuelErr').textContent = r.error.message; return; } await reloadPricing(); };
+}
+async function reloadPricing() {
+  [PRODUCTS, PERIODS, PRICING, RULES, SETTINGS, DRIVERS, BOOKS] = await Promise.all([fetchAll('products', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null), fetchAll('settings', null), fetchAll('drivers', null), fetchAll('books', { col: 'book_start', asc: true })]);
+  drawPricing(); drawShelf();
+}
+function tableRows() {
+  return Array.from($('pBody').querySelectorAll('tr')).map(tr => ({ code: tr.querySelector('.pc').value.trim(), name: tr.querySelector('.pn').value.trim(), vat: tr.querySelector('.pv').value.trim(), role: tr.querySelector('.pr').value, price: tr.querySelector('.pp').value.trim(), per_kg: tr.querySelector('.pk').value.trim(), active: tr.querySelector('.pa').checked,
+    over_code: (PRODUCTS.find(p => p.product_code === tr.querySelector('.pc').value.trim()) || {}).over_code || '', over_name: (PRODUCTS.find(p => p.product_code === tr.querySelector('.pc').value.trim()) || {}).over_name || '' }));
+}
+async function savePriceList() {
+  const cur = currentPeriod(); if (!cur) { $('pErr').textContent = 'No price period found.'; return; }
+  $('pErr').textContent = 'Saving...';
+  const r = await sb.rpc('save_price_list', { p: { period_id: cur.period_id, same_day_total: $('pSD').value.trim(), rows: tableRows() } });
+  if (r.error) { $('pErr').textContent = r.error.message; return; }
+  await reloadPricing(); $('pErr').textContent = 'Saved.';
+}
+async function annualUpdate() {
+  const st = pricingState(); if (!confirm('Apply the changed prices from 1 April ' + st.annual.year + '? Fuel Levy and Same Day are not changed by this.')) return;
+  $('pErr').textContent = 'Saving...';
+  const r = await sb.rpc('annual_update', { p: { year: st.annual.year, rows: tableRows().map(x => ({ code: x.code, price: x.price, per_kg: x.per_kg })) } });
+  if (r.error) { $('pErr').textContent = r.error.message; return; }
+  await reloadPricing(); $('pErr').textContent = 'Annual update applied.';
+}
+$('rBody').onclick = e => { const tr = e.target.closest('tr[data-r]'); if (tr && ROLE === 'admin') ruleForm(RULES.find(x => x.rule_id === tr.dataset.r)); };
+$('rnew').onclick = () => ruleForm(null);
+function ruleForm(r) {
+  const isNew = !r; r = r || { all_customers: false, customer_ids: [], product_codes: [], active: true };
+  const f = (id, label, val) => '<label for="' + id + '">' + label + '</label><input type="text" id="' + id + '" value="' + esc(val == null ? '' : val) + '">';
+  const custOpts = CUSTS.filter(c => c.active || (r.customer_ids || []).indexOf(c.customer_id) >= 0);
+  $('drawer').innerHTML = '<div class="frm"><button class="btn ghost" onclick="closeDrawer()">Cancel</button><h3 style="margin-top:12px">' + (isNew ? 'New discount rule' : 'Edit rule ' + esc(r.rule_id)) + '</h3>' + f('r_name', 'Name', r.name) +
+    '<div class="chk"><label><input type="checkbox" id="r_all"' + (r.all_customers ? ' checked' : '') + '> All customers</label></div><label for="r_cust">Customers (hold Ctrl to pick several)</label><select id="r_cust" multiple size="8">' + custOpts.map(c => '<option value="' + esc(c.customer_id) + '"' + ((r.customer_ids || []).indexOf(c.customer_id) >= 0 ? ' selected' : '') + '>' + esc(c.name) + '</option>').join('') + '</select>' +
+    '<label for="r_prod">Products (empty = all products)</label><select id="r_prod" multiple size="6">' + PRODUCTS.map(p => '<option value="' + esc(p.product_code) + '"' + ((r.product_codes || []).indexOf(p.product_code) >= 0 ? ' selected' : '') + '>' + esc(p.product_code) + '</option>').join('') + '</select>' +
+    f('r_min', 'From kg (leave empty for any)', r.min_kg) + f('r_max', 'Under kg (leave empty for any)', r.max_kg) + f('r_pct', 'Discount %', r.discount_pct) + '<div class="chk"><label><input type="checkbox" id="r_act"' + (r.active ? ' checked' : '') + '> Active</label></div><div class="row"><button class="btn" id="r_save">Save</button></div><p id="r_err" class="err"></p></div>';
+  $('r_save').onclick = async () => {
+    const sel = id => Array.from($(id).selectedOptions).map(o => o.value), p = { rule_id: isNew ? '' : r.rule_id, name: $('r_name').value.trim(), all_customers: $('r_all').checked, customer_ids: sel('r_cust'), product_codes: sel('r_prod'), min_kg: $('r_min').value.trim().replace(',', '.'), max_kg: $('r_max').value.trim().replace(',', '.'), discount_pct: $('r_pct').value.trim().replace(',', '.'), active: $('r_act').checked };
+    $('r_err').textContent = 'Saving...'; const res = await sb.rpc('save_rule', { p }); if (res.error) { $('r_err').textContent = res.error.message; return; }
+    RULES = isNew ? RULES.concat([res.data]) : RULES.map(x => x.rule_id === r.rule_id ? res.data : x); drawPricing(); closeDrawer();
+  };
+  $('drawer').classList.remove('hide');
+}
+$('dBody').onclick = e => { const tr = e.target.closest('tr[data-d]'); if (tr && canEdit()) driverForm(DRIVERS.find(x => x.driver_id === tr.dataset.d)); };
+$('dnew').onclick = () => driverForm(null);
+function driverForm(d) {
+  const isNew = !d; d = d || { active: true, role: 'Driver' };
+  const f = (id, label, val) => '<label for="' + id + '">' + label + '</label><input type="text" id="' + id + '" value="' + esc(val == null ? '' : val) + '">';
+  $('drawer').innerHTML = '<div class="frm"><button class="btn ghost" onclick="closeDrawer()">Cancel</button><h3 style="margin-top:12px">' + (isNew ? 'New driver' : 'Edit ' + esc(d.name)) + '</h3>' + f('d_name', 'Name', d.name) + f('d_phone', 'Phone', d.phone) + f('d_email', 'Email', d.email) +
+    '<label for="d_role">Role</label><select id="d_role">' + ['Driver', 'Admin'].map(x => '<option' + (x === d.role ? ' selected' : '') + '>' + x + '</option>').join('') + '</select><div class="chk"><label><input type="checkbox" id="d_act"' + (d.active !== false ? ' checked' : '') + '> Active</label></div><div class="row"><button class="btn" id="d_save">Save</button></div><p id="d_err" class="err"></p></div>';
+  $('d_save').onclick = async () => {
+    $('d_err').textContent = 'Saving...'; const res = await sb.rpc('save_driver', { p: { driver_id: isNew ? '' : d.driver_id, name: $('d_name').value, phone: $('d_phone').value, email: $('d_email').value, role: $('d_role').value, active: $('d_act').checked } });
+    if (res.error) { $('d_err').textContent = res.error.message; return; }
+    [DRIVERS, BOOKS, ORDERS] = await Promise.all([fetchAll('drivers', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('orders', { col: 'received', asc: false })]); drawPricing(); drawShelf(); drawOrders(); closeDrawer();
+  };
+  $('drawer').classList.remove('hide');
+}
 
 start();
 </script>
