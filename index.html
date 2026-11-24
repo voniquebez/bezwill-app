@@ -142,6 +142,8 @@
         <label for="c_d">Discount %</label><input type="text" id="c_d" value="0" inputmode="decimal">
         <label for="c_wb">Waybill number (optional)</label><input type="text" id="c_wb" inputmode="numeric">
         <div id="c_out" style="margin:10px 0"></div>
+        <label for="c_ov">Override cash price (R, incl VAT) - optional</label><input type="text" id="c_ov" inputmode="decimal" placeholder="Type a price to use instead of the calculated one">
+        <div class="hint" id="c_ovn" style="margin-bottom:8px">Leave empty to use the calculated price. With an override, weight and parcels are not needed.</div>
         <div class="row"><button class="btn" id="c_rec">Record cash round</button></div><p id="c_err" class="err"></p>
       </div></div>
       <h3>Recent cash rounds</h3><div class="card"><table><thead><tr><th>Round</th><th>When</th><th>Client</th><th>Weight</th><th>Cash</th><th>Waybill</th></tr></thead><tbody id="c_recent"></tbody></table></div>
@@ -189,7 +191,7 @@ const SUPABASE_URL = 'https://vbzuuqclmowcnsezxjeo.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_o8FNrGvKzQ6-SfxStPxpJQ_WsMHLAsv';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let TOASTT = null;
-function toast(kind, text) { try { const t = document.getElementById('toast'); if (!t) return; t.className = 'show ' + kind; t.textContent = (kind === 'ok' ? '\u2713 ' : '\u26A0 ') + text; clearTimeout(TOASTT); TOASTT = setTimeout(() => { t.className = ''; }, kind === 'ok' ? 2200 : 5000); } catch (e) { } }
+function toast(kind, text) { try { const t = document.getElementById('toast'); if (!t) return; t.className = 'show ' + kind; t.textContent = (kind === 'ok' ? '\u2713 ' : '\u26A0 ') + text; clearTimeout(TOASTT); TOASTT = setTimeout(() => { t.className = ''; }, kind === 'ok' ? Math.min(2200 + text.length * 25, 6000) : 6000); } catch (e) { } }
 const NOTOAST = { my_role: 1, can_add_clients: 1, preview_gaps: 1, pricing_gate_ok: 1, next_invoice_no: 1, cur_month: 1, auto_advance: 1 };
 const TOASTTXT = { save_order: 'Order saved', set_holder: 'Book holder saved', save_book_note: 'Notes saved', create_invoice: 'Invoice created', mark_exported: 'Invoice file downloaded and locked', void_invoice: 'Invoice voided', add_books: 'Books added', cancel_waybills: 'Waybills cancelled', uncancel_waybills: 'Waybills un-cancelled', move_waybills: 'Waybills moved', carry_book: 'Book carried over', add_credit: 'Credit note saved', record_cash_round: 'Cash round recorded', apply_cash_round: 'Cash round applied', set_cash_prices: 'Cash prices saved', import_orders: 'Orders imported', merge_customers: 'Customers merged', merge_orders: 'Orders merged', dismiss_duplicate: 'Saved', cancel_orders: 'Orders cancelled', save_rule: 'Rule saved', save_driver: 'Driver saved', save_price_list: 'Price list saved', apply_fuel_update: 'Fuel update applied', annual_update: 'Annual update applied' };
 try { const _rpc = sb.rpc.bind(sb); sb.rpc = async function (fn, a) { let r; try { r = await _rpc(fn, a); } catch (e) { if (!NOTOAST[fn]) toast('err', 'NOT saved: ' + (e.message || e)); throw e; } if (!NOTOAST[fn]) { if (r && r.error) toast('err', 'NOT saved: ' + r.error.message); else toast('ok', TOASTTXT[fn] || 'Saved'); } return r; }; } catch (e) { }
@@ -299,7 +301,7 @@ const odate = o => o.collection_date ? String(o.collection_date).slice(0, 10) : 
 const ordTime = s => s ? new Date(s).toLocaleString('sv-SE', { timeZone: 'Africa/Johannesburg' }).slice(0, 16) : '';
 const inTab = (o, t) => (o.status !== 'Cancelled' || OF.canc) && (t === 'All' || (t === 'Closed' ? (o.status === 'Invoiced' || o.status === 'Cancelled') : o.status === t));
 const inFilter = o => (!OF.drv || o.driver === OF.drv) && (!OF.day || odate(o) === OF.day) && (!OF.q || [o.order_id, o.waybill, custName(o.customer_id), o.collection, o.delivery, o.driver, o.invoice_no, o.notes].join(' ').toLowerCase().includes(OF.q));
-const omsg = (kind, text) => { OMSG = text ? { kind, text } : null; $('oMsg').innerHTML = OMSG ? '<div class="omsg ' + kind + '">' + esc(text) + '</div>' : ''; };
+const omsg = (kind, text) => { OMSG = text ? { kind, text } : null; $('oMsg').innerHTML = OMSG ? '<div class="omsg ' + kind + '">' + esc(text) + '</div>' : ''; if (text && (kind === 'ok' || kind === 'err')) toast(kind, text); };
 const guessName = place => { const id = guessCust(place); return id && CBY[id] ? CBY[id].name : ''; };
 function ordSuggest(o) { if (o.who_pays) return o.who_pays; if (OSIDE[o.order_id]) return OSIDE[o.order_id]; if (guessCust(o.delivery) && !guessCust(o.collection)) return 'Receiver'; return 'Sender'; }
 function ordBillCell(o) {
@@ -1006,23 +1008,25 @@ function drawCash() {
   cashQuote();
 }
 let CQ = null;
+const ovPrice = () => { const v = Number(String($('c_ov').value || '').replace(/\s/g, '').replace(',', '.')); return v > 0 ? Math.round(v * 100) / 100 : 0; };
 function cashQuote() {
   CQ = null; let cfg; try { cfg = cashCfgNow(); } catch (e) { return; }
   const w = $('c_w').value.replace(',', '.').trim(), sd = $('c_sd').checked;
-  if (!sd && !w) { $('c_out').innerHTML = '<span class="mute">Enter the weight, or tick Same Day.</span>'; return; }
+  if (!sd && !w) { $('c_out').innerHTML = '<span class="mute">' + (ovPrice() ? 'Using your override price.' : 'Enter the weight, or tick Same Day, or type an override price.') + '</span>'; return; }
   try {
     const r = cashCalc_(cfg, { weight: w, sameDay: sd, surcharges: Array.from(document.querySelectorAll('.csur')).filter(c => c.checked).map(c => c.value), discountPct: $('c_d').value.replace(',', '.'), customerId: $('c_cust').value });
-    CQ = { r, cfg }; $('c_out').innerHTML = '<table><tbody>' + r.lines.map(l => '<tr><td>' + esc(l.label) + (l.qty ? ' <span class="mute">' + esc(l.qty) + '</span>' : '') + '</td><td style="text-align:right">' + l.incl.toFixed(2) + '</td></tr>').join('') + '</tbody></table><p style="font-size:22px;margin:8px 0"><b>Cash price: R' + r.cash + '</b> <span class="mute" style="font-size:13px">(R' + r.calculated.toFixed(2) + ' incl VAT, rounded)</span></p>';
+    CQ = { r, cfg }; $('c_out').innerHTML = '<table><tbody>' + r.lines.map(l => '<tr><td>' + esc(l.label) + (l.qty ? ' <span class="mute">' + esc(l.qty) + '</span>' : '') + '</td><td style="text-align:right">' + l.incl.toFixed(2) + '</td></tr>').join('') + '</tbody></table><p style="font-size:22px;margin:8px 0"><b>Cash price: R' + r.cash + '</b> <span class="mute" style="font-size:13px">(R' + r.calculated.toFixed(2) + ' incl VAT, rounded)</span></p>' + (ovPrice() ? '<p style="font-size:18px;margin:4px 0;color:#b45309"><b>Override: R' + ovPrice().toFixed(2) + ' will be recorded instead.</b></p>' : '');
   } catch (e) { $('c_out').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
 }
-['c_cust', 'c_w', 'c_sd', 'c_d'].forEach(id => { $(id).oninput = cashQuote; $(id).onchange = cashQuote; });
+['c_cust', 'c_w', 'c_sd', 'c_d', 'c_ov'].forEach(id => { $(id).oninput = cashQuote; $(id).onchange = cashQuote; });
 $('c_sur').onchange = cashQuote;
 $('c_rec').onclick = async () => {
-  cashQuote(); if (!CQ) { $('c_err').textContent = 'Fill in the weight (or Same Day) first.'; return; } if (!$('c_cust').value) { $('c_err').textContent = 'Choose a client.'; return; }
-  $('c_err').className = 'err'; $('c_err').textContent = 'Saving...'; const r = CQ.r, sd = $('c_sd').checked;
-  const res = await sb.rpc('record_cash_round', { p: { customer_id: $('c_cust').value, weight_kg: sd ? null : $('c_w').value.replace(',', '.'), same_day: sd, surcharges: Array.from(document.querySelectorAll('.csur')).filter(c => c.checked).map(c => c.value), discount_pct: $('c_d').value.replace(',', '.') || 0, calculated: r.calculated, cash_price: r.cash, price_list: CQ.cfg.periodId, waybill: $('c_wb').value.replace(/\s+/g, '') } });
+  cashQuote(); const ov = ovPrice(); if ($('c_ov').value.trim() && !ov) { $('c_err').textContent = 'The override price must be a number above 0.'; return; }
+  if (!CQ && !ov) { $('c_err').textContent = 'Fill in the weight (or Same Day), or type an override price.'; return; } if (!$('c_cust').value) { $('c_err').textContent = 'Choose a client.'; return; }
+  $('c_err').className = 'err'; $('c_err').textContent = 'Saving...'; const r = CQ ? CQ.r : { calculated: null, cash: ov }, sd = $('c_sd').checked;
+  const res = await sb.rpc('record_cash_round', { p: { customer_id: $('c_cust').value, weight_kg: sd ? null : ($('c_w').value.replace(',', '.') || null), same_day: sd, surcharges: Array.from(document.querySelectorAll('.csur')).filter(c => c.checked).map(c => c.value), discount_pct: $('c_d').value.replace(',', '.') || 0, calculated: r.calculated, cash_price: ov || r.cash, price_list: CQ ? CQ.cfg.periodId : '', waybill: $('c_wb').value.replace(/\s+/g, '') } });
   if (res.error) { $('c_err').textContent = res.error.message; return; }
-  $('c_w').value = ''; $('c_sd').checked = false; $('c_wb').value = ''; $('c_err').className = 'mute'; await reloadInvoicing(); $('c_err').textContent = 'Recorded ' + res.data.id + ': R' + res.data.cash + (res.data.linked ? ' (tied to order ' + res.data.linked + ')' : '') + '.';
+  $('c_w').value = ''; $('c_ov').value = ''; $('c_sd').checked = false; $('c_wb').value = ''; $('c_err').className = 'mute'; await reloadInvoicing(); $('c_err').textContent = 'Recorded ' + res.data.id + ': R' + res.data.cash + (res.data.linked ? ' (tied to order ' + res.data.linked + ')' : '') + '.';
 };
 let IGROUPS = [];
 function invoiceGroups(upTo) {
