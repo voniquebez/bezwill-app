@@ -58,7 +58,7 @@
   .grid { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin:8px 0 12px; } @media (min-width:560px){ .grid { grid-template-columns:repeat(10,1fr); } }
   .cell { display:block; border-radius:6px; padding:6px 2px 5px; text-align:center; font-size:13px; font-weight:700; border:2px solid transparent; user-select:none; min-height:48px; position:relative; cursor:default; }
   .cell .ref { font-size:10px; font-weight:600; line-height:1.15; word-break:break-all; margin-top:1px; }
-  .cell input { position:absolute; top:1px; left:2px; margin:0; width:13px; height:13px; }
+  .cell input { position:absolute; top:1px; left:2px; margin:0; width:16px; height:16px; }
   .cell.open { background:#7fdcff; color:#0d3350; border-color:#0284c7; }
   .cell.open.ordered { background:#ffb85c; color:#3d2000; border-color:#b45f0a; }
   .cell.invoiced { background:#4ade80; color:#052e16; border-color:#15803d; }
@@ -286,7 +286,7 @@ function dupMap_() {
 let DUPS = {};
 
 const ORD_TABS = [['New', 'To assign a waybill'], ['Assigned', 'Waiting for weight / parcels / client'], ['Weighed', 'Ready to invoice'], ['Closed', 'Invoiced'], ['All', 'All']];
-let OF = { tab: 'New', drv: '', day: '', canc: false, q: '' }, OSEL_ON = false, OSEL = {}, OSIDE = {}, OMSG = null;
+let OF = { tab: 'New', drv: '', day: '', canc: false, q: '' }, OSEL_ON = false, OSEL = {}, OSIDE = {}, OMSG = null, ODRAFT = {}, ODROP = {}, OPANEL = {}, WBCTX = null;
 const odate = o => o.collection_date ? String(o.collection_date).slice(0, 10) : recvDay(o.received);
 const ordTime = s => s ? new Date(s).toLocaleString('sv-SE', { timeZone: 'Africa/Johannesburg' }).slice(0, 16) : '';
 const inTab = (o, t) => (o.status !== 'Cancelled' || OF.canc) && (t === 'All' || (t === 'Closed' ? (o.status === 'Invoiced' || o.status === 'Cancelled') : o.status === t));
@@ -305,6 +305,23 @@ function dupBadge(o) {
     const btn = !mine ? '<button class="ob primary save" data-act="merge" data-keep="' + esc(b.order_id) + '" data-drop="' + esc(o.order_id) + '">Same order - merge into ' + (theirs ? 'WB' + b.waybill : esc(b.order_id)) + '</button>' : (!theirs && b.status !== 'Invoiced' ? '<button class="ob primary save" data-act="merge" data-keep="' + esc(o.order_id) + '" data-drop="' + esc(b.order_id) + '">Same order - merge ' + esc(b.order_id) + ' into this one</button>' : '');
     return '<div class="omsg warn" style="margin:4px 0;padding:4px 8px"><b>&#9888; Possible duplicate of ' + esc(label) + '</b> <span class="hint">' + esc((b.collection || '?') + ' -> ' + (b.delivery || '?')) + '</span><div class="orow" style="margin:3px 0 0">' + btn + '<button class="ob ghost" data-act="notdup" data-a="' + esc(o.order_id) + '" data-b="' + esc(b.order_id) + '">Not a duplicate</button></div></div>'; }).join('');
 }
+function ordSnap() {
+  document.querySelectorAll('#oTable tr[data-o]').forEach(tr => { const id = tr.dataset.o; if (ODROP[id]) return; const d = {};
+    [['wb', 'ow_' + id], ['p', 'ow_' + id + '_p'], ['w', 'ow_' + id + '_w'], ['c', 'oc_' + id]].forEach(([k, eid]) => { const e = document.getElementById(eid); if (e && !e.disabled && e.value !== e.defaultValue) d[k] = e.value; });
+    if (Object.keys(d).length) ODRAFT[id] = d; else delete ODRAFT[id]; });
+  ODROP = {};
+}
+function ordRestore() {
+  Object.keys(ODRAFT).forEach(id => { const d = ODRAFT[id]; [['wb', 'ow_' + id], ['p', 'ow_' + id + '_p'], ['w', 'ow_' + id + '_w'], ['c', 'oc_' + id]].forEach(([k, eid]) => { const e = document.getElementById(eid); if (e && k in d && !e.disabled) e.value = d[k]; }); });
+}
+function ordPanel(o, sur) {
+  const kind = OPANEL[o.order_id]; if (!kind) return ''; const id = esc(o.order_id), cols = 9 + (OSEL_ON ? 1 : 0); let h;
+  const btns = (clear) => '<div class="orow" style="margin:6px 0 0"><button class="ob primary save" data-act="panapply" data-id="' + id + '">Apply</button><button class="ob ghost" data-act="panclose" data-id="' + id + '">Close</button>' + (clear ? '<button class="ob danger" data-act="panclear" data-id="' + id + '">Remove</button>' : '') + '</div>';
+  if (kind === 'sur') { const have = {}; sur.forEach(x => { if (x && x.code) have[x.code] = x.desc || ''; });
+    h = '<b>Surcharges</b> <span class="hint">tick the ones that apply, add a description if you like, then Apply (the typed waybill / parcels / weight / client are saved too)</span>' + surOptions().map(p => '<div style="display:flex;gap:8px;align-items:center;margin:4px 0"><label style="display:flex;gap:8px;align-items:center;margin:0;min-width:240px"><input type="checkbox" class="ps_sur" data-code="' + esc(p.product_code) + '"' + (p.product_code in have ? ' checked' : '') + '> ' + esc(p.name) + '</label><input type="text" class="ps_surd" data-code="' + esc(p.product_code) + '" placeholder="description (optional)" value="' + esc(have[p.product_code] || '') + '" style="flex:1;max-width:340px;padding:5px 8px;border:1px solid var(--line);border-radius:8px"></div>').join('') + btns(sur.length);
+  } else h = '<b>Volumetric</b> <span class="hint">enter the sizes in cm; the weight is worked out from them (rounded up to a whole kg)</span><div style="display:flex;gap:8px;margin:6px 0"><input type="text" class="ps_l" placeholder="Length cm" value="' + esc(o.length_cm == null ? '' : o.length_cm) + '" inputmode="decimal" style="width:100px"><input type="text" class="ps_w" placeholder="Width cm" value="' + esc(o.width_cm == null ? '' : o.width_cm) + '" inputmode="decimal" style="width:100px"><input type="text" class="ps_h" placeholder="Height cm" value="' + esc(o.height_cm == null ? '' : o.height_cm) + '" inputmode="decimal" style="width:100px"></div>' + btns(o.volumetric);
+  return '<tr id="opan_' + id + '"><td colspan="' + cols + '"><div class="omsg warn" style="margin:0 0 6px">' + h + '</div></td></tr>';
+}
 function ordRow(o) {
   const closed = o.status === 'Invoiced' || o.status === 'Cancelled', id = esc(o.order_id), sur = Array.isArray(o.surcharges) ? o.surcharges : [], edit = canEdit();
   const lead = '<tr id="orow_' + id + '" data-o="' + id + '"' + (OSEL_ON && OSEL[o.order_id] ? ' style="background:#fff3e0"' : '') + '>' + (OSEL_ON ? '<td>' + (closed ? '' : '<input type="checkbox" class="osel" data-id="' + id + '"' + (OSEL[o.order_id] ? ' checked' : '') + ' style="width:20px;height:20px">') + '</td>' : '') +
@@ -314,12 +331,12 @@ function ordRow(o) {
   const nm = c => { const p = PRODUCTS.find(x => x.product_code === c); return p ? p.name : c; };
   return lead + '<td><input type="text" id="ow_' + id + '" data-row="' + id + '" value="' + esc(o.waybill) + '" inputmode="numeric" style="width:92px"></td><td><input type="text" id="ow_' + id + '_p" data-row="' + id + '" value="' + esc(o.parcels) + '" inputmode="numeric" style="width:56px"></td>' +
     '<td style="white-space:nowrap"><input type="text" id="ow_' + id + '_w" data-row="' + id + '" value="' + esc(o.weight_kg) + '" inputmode="decimal" style="width:70px"' + (o.volumetric ? ' disabled' : '') + '>' +
-    '<br><label class="hint"><input type="checkbox" data-act="vol" data-id="' + id + '"' + (o.volumetric ? ' checked' : '') + '> volumetric</label><br><label class="hint"><input type="checkbox" data-act="sd" data-id="' + id + '"' + (o.same_day ? ' checked' : '') + '> same day</label><br><label class="hint"><input type="checkbox" data-act="sur" data-id="' + id + '"' + (sur.length ? ' checked' : '') + '> surcharge</label>' +
+    '<br><label class="hint"><input type="checkbox" data-act="vol" data-id="' + id + '"' + (o.volumetric || OPANEL[o.order_id] === 'vol' ? ' checked' : '') + '> volumetric</label><br><label class="hint"><input type="checkbox" data-act="sd" data-id="' + id + '"' + (o.same_day ? ' checked' : '') + '> same day</label><br><label class="hint"><input type="checkbox" data-act="sur" data-id="' + id + '"' + (sur.length || OPANEL[o.order_id] === 'sur' ? ' checked' : '') + '> surcharge</label>' +
     (sur.length ? '<br><span class="hint" style="color:#b45309">' + sur.map(x => esc(x.desc || nm(x.code))).join('; ') + '</span>' : '') + (o.length_cm ? '<br><span class="hint">' + (o.volumetric ? '' : 'measured ') + o.length_cm + '&times;' + o.width_cm + '&times;' + o.height_cm + ' cm</span>' : '') + '</td>' +
-    '<td style="white-space:nowrap"><button class="ob primary save" data-act="save" data-id="' + id + '">Save</button> <button class="ob" data-act="edit" data-id="' + id + '">Edit</button></td><td style="white-space:nowrap">' + (o.status === 'Weighed' ? '<button class="ob primary go" data-act="inv" data-id="' + id + '">Invoice</button>' : '') + '</td></tr>';
+    '<td style="white-space:nowrap"><button class="ob primary save" data-act="save" data-id="' + id + '">Save</button> <button class="ob" data-act="edit" data-id="' + id + '">Edit</button></td><td style="white-space:nowrap">' + (o.status === 'Weighed' ? '<button class="ob primary go" data-act="inv" data-id="' + id + '">Invoice</button>' : '') + '</td></tr>' + ordPanel(o, sur);
 }
 function drawOrders() {
-  DUPS = dupMap_();
+  ordSnap(); DUPS = dupMap_();
   const list = ORDERS.filter(o => inFilter(o) && inTab(o, OF.tab)), drv = {}; ORDERS.forEach(o => { if (o.driver) drv[o.driver] = 1; });
   $('oc_list').innerHTML = CUSTS.filter(c => c.active).map(c => '<option value="' + esc(c.name) + '">').join('');
   $('of_drv').innerHTML = '<option value="">All drivers</option>' + Object.keys(drv).sort().map(n => '<option value="' + esc(n) + '"' + (OF.drv === n ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
@@ -331,16 +348,18 @@ function drawOrders() {
   $('oSelBar').innerHTML = OSEL_ON ? '<div class="omsg warn"><b><span id="selcount">' + nsel + '</span> selected.</b> Tick orders in the list (invoiced and cancelled ones cannot be selected).<div class="orow" style="margin:4px 0 0"><button class="ob ghost" data-act="selall">Select all shown (' + open + ')</button><button class="ob ghost" data-act="selclear">Clear</button><button id="selinv" class="ob primary go" data-act="selinv"' + (nsel ? '' : ' disabled') + '>Invoice selected</button><button id="selcancel" class="ob danger" data-act="selcancel"' + (nsel ? '' : ' disabled') + '>Cancel selected</button></div></div>' : '';
   const shown = list.slice(0, 400);
   $('oTable').innerHTML = shown.length ? '<table><tr>' + (OSEL_ON ? '<th></th>' : '') + '<th>Received</th><th>Collection &rarr; Delivery</th><th>Bill to (client)</th><th>Waybill</th><th>Parcels</th><th>Weight kg</th><th></th><th>Invoice</th></tr>' + shown.map(ordRow).join('') + '</table>' + (list.length > shown.length ? '<div class="hint" style="padding:10px 0">Showing the newest ' + shown.length + ' of ' + list.length + '. Use the filters or search to narrow it down.</div>' : '') : '<div class="hint" style="padding:14px 0">Nothing here.</div>';
+  ordRestore();
 }
 async function ordSave(id, p, okText) {
   const r = await sb.rpc('save_order', { p: Object.assign({ order_id: id }, p) }); if (r.error) { omsg('err', r.error.message); return null; }
   const saved = r.data; ORDERS = ORDERS.map(o => o.order_id === id ? saved : o);
   if (saved.customer_id && saved.who_pays) { const pl = placeKey(saved.who_pays === 'Sender' ? saved.collection : saved.delivery); if (pl) ALIASES[pl] = saved.customer_id; }
-  delete OSIDE[id]; drawOrders(); drawShelf(); drawInvoicing(); omsg('ok', okText || ('Saved ' + id + (saved.waybill ? ' (waybill ' + saved.waybill + ')' : '') + ': ' + ({ New: 'still needs a waybill', Assigned: 'waiting for weight / parcels / client', Weighed: 'ready to invoice' }[saved.status] || saved.status) + '.')); return saved;
+  delete OSIDE[id]; delete OPANEL[id]; delete ODRAFT[id]; ODROP[id] = 1; drawOrders(); drawShelf(); drawInvoicing(); omsg('ok', okText || ('Saved ' + id + (saved.waybill ? ' (waybill ' + saved.waybill + ')' : '') + ': ' + ({ New: 'still needs a waybill', Assigned: 'waiting for weight / parcels / client', Weighed: 'ready to invoice' }[saved.status] || saved.status) + '.')); return saved;
 }
-async function ordInline(id) {
-  const o = ORDERS.find(x => x.order_id === id); if (!o) return;
-  const p = { waybill: $('ow_' + id).value.trim(), parcels: $('ow_' + id + '_p').value.trim() }; if (!o.volumetric) p.weight_kg = $('ow_' + id + '_w').value.trim();
+async function ordInline(id, extra) {
+  const o = ORDERS.find(x => x.order_id === id); if (!o) return; extra = extra || {};
+  const p = { waybill: $('ow_' + id).value.trim(), parcels: $('ow_' + id + '_p').value.trim() }; if (!(extra.volumetric !== undefined ? extra.volumetric : o.volumetric)) p.weight_kg = $('ow_' + id + '_w').value.trim();
+  Object.assign(p, extra);
   const cn = ($('oc_' + id).value || '').trim().toLowerCase();
   if (cn) { const c = CUSTS.find(x => x.name.trim().toLowerCase() === cn); if (!c) { omsg('err', 'Pick the client from the list (or add the client on the Customers screen first).'); return; } p.customer_id = c.customer_id; p.who_pays = ordSuggest(o); }
   else if (o.customer_id) { p.customer_id = ''; }
@@ -370,7 +389,12 @@ function ordAct(e) {
   const t = e.target, b = t.closest && t.closest('[data-act]'); if (t.classList && t.classList.contains('osel')) { if (t.checked) OSEL[t.dataset.id] = 1; else delete OSEL[t.dataset.id]; const n = Object.keys(OSEL).length; $('selcount').textContent = n; $('selinv').disabled = !n; $('selcancel').disabled = !n; const r = $('orow_' + t.dataset.id); if (r) r.style.background = t.checked ? '#fff3e0' : ''; return true; }
   if (!b) return !!(t.closest && t.closest('input,select,textarea,label,button')); const a = b.dataset.act, id = b.dataset.id;
   if (a === 'tab') { OF.tab = b.dataset.t; drawOrders(); } else if (a === 'save') ordInline(id); else if (a === 'edit') editOrder(id); else if (a === 'rev') ordReverse(id); else if (a === 'inv') openInvoiceFor([id]);
-  else if (a === 'vol' || a === 'sur') { t.checked = !t.checked; editOrder(id); omsg('warn', 'Fill in the ' + (a === 'vol' ? 'sizes' : 'surcharges') + ' in the order form, then Save.'); }
+  else if (a === 'vol' || a === 'sur') { if (OPANEL[id] === a) delete OPANEL[id]; else OPANEL[id] = a; drawOrders(); }
+  else if (a === 'panclose') { delete OPANEL[id]; drawOrders(); }
+  else if (a === 'panclear') { ordInline(id, OPANEL[id] === 'sur' ? { surcharges: [] } : { volumetric: false }); }
+  else if (a === 'panapply') { const pr = $('opan_' + id), kind = OPANEL[id]; if (!pr) return true;
+    if (kind === 'sur') { const arr = []; pr.querySelectorAll('.ps_sur').forEach(cb => { if (cb.checked) { const d = pr.querySelector('.ps_surd[data-code="' + cb.dataset.code + '"]'); arr.push({ code: cb.dataset.code, desc: d ? d.value.trim() : '' }); } }); ordInline(id, { surcharges: arr }); }
+    else { const v = c => pr.querySelector('.' + c).value.trim(); if (!v('ps_l') || !v('ps_w') || !v('ps_h')) { omsg('err', 'Enter the length, width and height.'); return true; } ordInline(id, { volumetric: true, length_cm: v('ps_l'), width_cm: v('ps_w'), height_cm: v('ps_h') }); } }
   else if (a === 'sd') { ordSave(id, { same_day: t.checked }, t.checked ? 'Same Day ticked - it is billed at the Same Day price.' : 'Same Day removed.').then(r => { if (!r) drawOrders(); }); }
   else if (a === 'merge') { if (confirm('Merge ' + b.dataset.drop + ' into ' + b.dataset.keep + '? ' + b.dataset.drop + ' is cancelled and its details are added to ' + b.dataset.keep + '.')) sb.rpc('merge_orders', { p_keep: b.dataset.keep, p_drop: b.dataset.drop }).then(async r => { if (r.error) omsg('err', r.error.message); else { await reloadInvoicing(); omsg('ok', 'Merged ' + b.dataset.drop + ' into ' + b.dataset.keep + '.'); } }); }
   else if (a === 'notdup') sb.rpc('dismiss_duplicate', { p_a: b.dataset.a, p_b: b.dataset.b }).then(async r => { if (r.error) omsg('err', r.error.message); else { await reloadInvoicing(); omsg('ok', 'Noted - these two will not be flagged again.'); } });
@@ -397,7 +421,7 @@ function drawCustomers() {
 }
 $('cq').oninput = drawCustomers; $('cact').onchange = drawCustomers;
 
-function closeDrawer() { $('drawer').classList.add('hide'); $('drawer').style.width = ''; }
+function closeDrawer() { WBCTX = null; $('drawer').classList.add('hide'); $('drawer').style.width = ''; }
 function dl(pairs) { return '<dl>' + pairs.filter(p => p[1] !== '' && p[1] != null).map(p => '<dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd>').join('') + '</dl>'; }
 $('oTable').onclick = e => {
   if (ordAct(e)) return;
@@ -471,8 +495,8 @@ function guessCust(place) {
   return best;
 }
 const surOptions = () => PRODUCTS.filter(p => /^surcharge/i.test(p.product_code) && !p.role && p.active !== false);
-function orderForm(o) {
-  const isNew = !o; o = o || { who_pays: '', same_day: false };
+function orderForm(o, pre) {
+  const isNew = !o; o = o || Object.assign({ who_pays: '', same_day: false }, pre || {});
   const f = (id, label, val, area) => '<label for="' + id + '">' + label + '</label>' + (area ? '<textarea id="' + id + '" rows="2">' : '<input type="text" id="' + id + '" value="') + esc(val == null ? '' : val) + (area ? '</textarea>' : '">');
   const act = CUSTS.filter(c => c.active || c.customer_id === o.customer_id);
   const drv = DRIVERS.filter(d => d.active !== false).map(d => d.name).filter(x => x); if (o.driver && drv.indexOf(o.driver) < 0) drv.push(o.driver);
@@ -503,7 +527,13 @@ function orderForm(o) {
   ['o_col', 'o_del'].forEach(k => $(k).oninput = tryGuess); $('o_who').onchange = tryGuess; $('o_cust').oninput = () => { auto = false; $('o_guess').textContent = ''; };
   $('drawer').classList.remove('hide');
 }
-function editOrder(id) { const o = ORDERS.find(x => x.order_id === id); if (o) orderForm(o); }
+function editOrder(id) {
+  const o0 = ORDERS.find(x => x.order_id === id); if (!o0) return; const o = Object.assign({}, o0), g = k => document.getElementById(k);
+  const a = g('ow_' + id), p = g('ow_' + id + '_p'), w = g('ow_' + id + '_w'), c = g('oc_' + id);
+  if (a) o.waybill = a.value.trim(); if (p) o.parcels = p.value.trim(); if (w && !w.disabled) o.weight_kg = w.value.trim();
+  if (c) { const cn = c.value.trim().toLowerCase(), cu = cn && CUSTS.find(x => x.name.trim().toLowerCase() === cn); if (cu) { o.customer_id = cu.customer_id; if (!o.who_pays) o.who_pays = ordSuggest(o0); } else if (!cn) o.customer_id = null; }
+  orderForm(o);
+}
 $('onew').onclick = () => orderForm(null);
 async function saveOrder(id, cancel) {
   const v = k => $(k).value.trim(), err = m => { $('o_err').textContent = m; };
@@ -520,7 +550,7 @@ async function saveOrder(id, cancel) {
   const saved = res.data;
   if (id) ORDERS = ORDERS.map(o => o.order_id === id ? saved : o); else ORDERS.unshift(saved);
   if (saved.customer_id && saved.who_pays) { const pl = placeKey(saved.who_pays === 'Sender' ? saved.collection : saved.delivery); if (pl) ALIASES[pl] = saved.customer_id; }
-  drawOrders(); drawShelf(); closeDrawer();
+  if (id) { delete ODRAFT[id]; ODROP[id] = 1; delete OPANEL[id]; } const back = WBCTX; drawOrders(); drawShelf(); closeDrawer(); if (back) openBook(back);
 }
 
 /* ---------- waybill books ---------- */
@@ -550,19 +580,38 @@ function openBook(start) {
     const state = w.status === 'Invoiced' ? 'Invoiced' : w.status === 'Cancelled' ? 'Cancelled' : (w.billing_month === CURMONTH ? 'Open' : 'Carried over'), o = om[w.waybill];
     const cls = state === 'Open' ? 'open' + (o ? ' ordered' : '') : state === 'Invoiced' ? 'invoiced' : state === 'Cancelled' ? 'cancelled' : 'carried';
     const ref = state === 'Invoiced' ? w.invoice_no : state === 'Cancelled' ? 'cancelled' : o ? (custName(o.customer_id) || o.order_id).slice(0, 14) : (state === 'Carried over' ? 'carried' : '');
-    return '<label class="cell ' + cls + '" title="' + esc([state, custName(w.customer_id) || (o ? custName(o.customer_id) : ''), o ? o.order_id + ' ' + (o.delivery || '') : '', w.cash_paid ? 'Cash' : ''].filter(Boolean).join(' | ')) + '">' + (canEdit() ? '<input type="checkbox" class="wsel" data-w="' + w.waybill + '" data-s="' + state + '">' : '') + '<div class="num">' + w.waybill + '</div><div class="ref">' + esc(ref) + '</div></label>'; }).join('');
+    return '<label class="cell ' + cls + '" data-w="' + w.waybill + '" style="cursor:pointer" title="' + esc([state, custName(w.customer_id) || (o ? custName(o.customer_id) : ''), o ? o.order_id + ' ' + (o.delivery || '') : '', w.cash_paid ? 'Cash' : ''].filter(Boolean).join(' | ')) + '">' + (canEdit() ? '<input type="checkbox" class="wsel" data-w="' + w.waybill + '" data-s="' + state + '">' : '') + '<div class="num">' + w.waybill + '</div><div class="ref">' + esc(ref) + '</div></label>'; }).join('');
   const drv = DRIVERS.filter(d => d.active !== false).map(d => d.name).filter(x => x); if (b.holder && drv.indexOf(b.holder) < 0) drv.push(b.holder);
   $('drawer').style.width = 'min(720px,100%)';
   $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Book ' + b.book_start + ' &ndash; ' + b.book_end + '</h3><div class="mute">' + (b.holder ? 'Out with ' + esc(b.holder) : 'At the office') + '</div>' +
     (canEdit() ? '<div class="frm"><label for="b_h">Who has this book?</label><div style="display:flex;gap:8px"><select id="b_h" style="flex:1"><option value="">At the office</option>' + drv.map(d => '<option' + (d === b.holder ? ' selected' : '') + '>' + esc(d) + '</option>').join('') + '</select><button class="btn" id="b_hs">Save</button></div>' +
       '<label for="b_n">Notes</label><textarea id="b_n" rows="3">' + esc(b.notes || '') + '</textarea><div class="row"><button class="btn ghost" id="b_ns">Save notes</button></div><p id="b_err" class="err"></p></div>' : (b.notes ? '<pre class="mute" style="white-space:pre-wrap">' + esc(b.notes) + '</pre>' : '')) +
     (canEdit() ? '<div class="bar" style="margin-top:12px;flex-wrap:wrap"><span class="mute">Tick waybills:</span><button class="btn ghost" id="w_cancel">Cancel</button><button class="btn ghost" id="w_uncancel">Un-cancel</button><button class="btn ghost" id="w_next">Carry to next month</button><button class="btn ghost" id="w_back">Bring back</button><button class="btn ghost" id="w_credit">Credit note</button><button class="btn ghost" id="w_book">Carry whole book</button></div><div id="w_form"></div>' : '') + '<div class="legend"><span><i class="dot" style="background:#7fdcff"></i>Open</span><span><i class="dot" style="background:#ffb85c"></i>On an order</span><span><i class="dot" style="background:#4ade80"></i>Invoiced</span><span><i class="dot" style="background:#f87171"></i>Cancelled</span><span><i class="dot" style="background:#c4b5fd"></i>Carried over</span></div><div class="grid">' + rows + '</div>';
+  const grid = $('drawer').querySelector ? $('drawer').querySelector('.grid') : null;
+  if (grid) grid.onclick = e => { if (e.target.closest && e.target.closest('input.wsel')) return; const c = e.target.closest && e.target.closest('.cell'); if (!c) return; e.preventDefault(); openWaybill(start, Number(c.dataset.w)); };
   if (canEdit()) {
     const upd = r => { if (r.error) { $('b_err').textContent = r.error.message; return false; } BOOKS = BOOKS.map(x => x.book_start === start ? r.data : x); drawShelf(); return true; };
     $('b_hs').onclick = async () => { $('b_err').textContent = 'Saving...'; if (upd(await sb.rpc('set_holder', { p_start: start, p_holder: $('b_h').value }))) openBook(start); };
     wbActions(start);
     $('b_ns').onclick = async () => { $('b_err').textContent = 'Saving...'; if (upd(await sb.rpc('save_book_note', { p_start: start, p_note: $('b_n').value }))) $('b_err').textContent = 'Notes saved.'; };
   }
+  $('drawer').classList.remove('hide');
+}
+
+function openWaybill(start, n) {
+  const b = BOOKS.find(x => x.book_start === start), w = WBS.find(x => x.waybill === n); if (!b || !w) return;
+  const o = ORDERS.find(x => x.waybill === n && x.status !== 'Cancelled');
+  const state = w.status === 'Invoiced' ? 'Invoiced' : w.status === 'Cancelled' ? 'Cancelled' : (w.billing_month === CURMONTH ? 'Open' : 'Carried over');
+  const row = (k, v) => v == null || v === '' ? '' : '<tr><td class="mute" style="padding:4px 12px 4px 0">' + k + '</td><td><b>' + esc(v) + '</b></td></tr>';
+  const inv = w.invoice_no ? INVOICES.find(i => i.invoice_no === w.invoice_no) : null;
+  let t = row('Status', state) + row('Invoice', w.invoice_no) + (inv ? row('Invoice date', inv.invoice_date) : '') + row('Client', custName(w.customer_id) || (o ? custName(o.customer_id) : '')) + (w.cash_paid ? row('Paid', 'Cash') : '') + row('Billing month', w.billing_month);
+  if (o) t += row('Order', o.order_id + ' (' + o.status + ')') + row('Collection', o.collection) + row('Delivery', o.delivery) + row('Driver', o.driver) + row('Parcels', o.parcels) + row('Weight kg', o.weight_kg) + row('Cash price', o.cash_price) + row('Notes', o.notes);
+  const open = state === 'Open' || state === 'Carried over', canOrd = canEdit() && open && (!o || (o.status !== 'Invoiced' && o.status !== 'Cancelled'));
+  $('drawer').style.width = 'min(560px,100%)';
+  $('drawer').innerHTML = '<button class="btn ghost" id="wd_back">&larr; Back to book ' + b.book_start + '</button><h3 style="margin-top:12px">Waybill ' + n + '</h3><table>' + t + '</table>' +
+    (canOrd ? '<div class="row" style="margin-top:14px"><button class="btn" id="wd_edit">' + (o ? 'Edit this order' : 'Add info (new order)') + '</button></div>' : (o && o.status === 'Invoiced' ? '<p class="mute">Already invoiced, so it cannot be changed here.</p>' : (!o && !open ? '' : '')));
+  $('wd_back').onclick = () => openBook(start);
+  if (canOrd) $('wd_edit').onclick = () => { WBCTX = start; if (o) orderForm(o); else orderForm(null, { waybill: n, driver: b.holder || '' }); };
   $('drawer').classList.remove('hide');
 }
 
