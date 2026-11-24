@@ -1160,8 +1160,20 @@ function drawCredits() {
   $('cnNew').style.display = CANCREDIT ? '' : 'none';
   $('cnDl').textContent = 'Download credit notes file (' + n + ' not yet downloaded)'; $('cnDl').disabled = !n;
   if (CRERR) { $('cnBody').innerHTML = '<tr><td colspan="8" class="err">Could not load the credit notes: ' + esc(CRERR) + '. Credit notes that were created are safe in the database.</td></tr>'; return; }
-  $('cnBody').innerHTML = CREDITS.slice().reverse().map(c => '<tr><td><b>' + esc(c.credit_no) + '</b></td><td>' + esc(c.customer) + '</td><td>' + esc(dmy_(String(c.credit_date).slice(0, 10))) + '</td><td>' + esc(c.invoice_no) + '</td><td>' + esc(c.waybill) + '</td><td>R' + r2(tt[c.credit_no] || 0).toFixed(2) + '</td><td>' + esc(c.reason) + '</td><td>' + (c.exported_at ? '<span class="pill Invoiced">Downloaded</span>' : '<span class="pill Weighed">Not yet downloaded</span>') + '</td></tr>').join('') || '<tr><td colspan="8" class="msg">No credit notes yet.</td></tr>';
+  $('cnBody').innerHTML = CREDITS.slice().reverse().map(c => '<tr data-cn="' + esc(c.credit_no) + '" style="cursor:pointer"><td><b>' + esc(c.credit_no) + '</b></td><td>' + esc(c.customer) + '</td><td>' + esc(dmy_(String(c.credit_date).slice(0, 10))) + '</td><td>' + esc(c.invoice_no) + '</td><td>' + esc(c.waybill) + '</td><td>R' + r2(tt[c.credit_no] || 0).toFixed(2) + '</td><td>' + esc(c.reason) + '</td><td>' + (c.exported_at ? '<span class="pill Invoiced">Downloaded</span>' : '<span class="pill Weighed">Not yet downloaded</span>') + '</td></tr>').join('') || '<tr><td colspan="8" class="msg">No credit notes yet.</td></tr>';
 }
+function openCredit(no) {
+  const c = CREDITS.find(x => x.credit_no === no); if (!c) return; const ls = CRLINES.filter(l => l.credit_no === no).sort((a, b) => a.line_no - b.line_no);
+  const sub = ls.reduce((a, l) => a + Number(l.amount), 0), tax = ls.reduce((a, l) => a + Number(l.tax_amount), 0);
+  $('drawer').style.width = 'min(680px,100%)';
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button> <button class="btn ghost" id="cd_wb">Open waybill ' + esc(c.waybill) + '</button><h3 style="margin-top:12px">Credit note ' + esc(no) + '</h3><span class="pill ' + (c.exported_at ? 'Invoiced' : 'Weighed') + '">' + (c.exported_at ? 'Downloaded' : 'Not yet downloaded') + '</span>' +
+    dl([['Customer', c.customer], ['Credit note date', dmy_(String(c.credit_date).slice(0, 10))], ['Invoice credited', c.invoice_no], ['Waybill', c.waybill], ['Order', c.order_id], ['Reason', c.reason], ['Memo (in the file)', c.memo], ['Created', fmtDT(c.created_at) + (c.created_by ? ' by ' + c.created_by : '')], ['Downloaded', c.exported_at ? fmtDT(c.exported_at) : '']]) +
+    '<h4 style="margin:12px 0 6px">Lines</h4><div style="overflow-x:auto"><table style="font-size:13px"><thead><tr><th>Item</th><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th><th>VAT</th></tr></thead><tbody>' + (ls.map(l => '<tr><td>' + esc(l.item) + '</td><td>' + esc(l.description) + '</td><td>' + esc(l.quantity) + '</td><td>' + Number(l.rate).toFixed(2) + '</td><td>' + Number(l.amount).toFixed(2) + '</td><td>' + Number(l.tax_amount).toFixed(2) + '</td></tr>').join('') || '<tr><td colspan="6" class="msg">No lines.</td></tr>') + '</tbody></table></div>' +
+    '<p style="margin:8px 0">Subtotal R' + sub.toFixed(2) + ' + VAT R' + tax.toFixed(2) + '</p><p style="font-size:18px;margin:4px 0"><b>Total credited: R' + (sub + tax).toFixed(2) + '</b></p>';
+  $('cd_wb').onclick = () => { const w = WBS.find(x => x.waybill === c.waybill); if (w) openWaybill(w.book_start, c.waybill); };
+  $('drawer').classList.remove('hide');
+}
+$('cnBody').onclick = e => { const tr = e.target.closest && e.target.closest('tr[data-cn]'); if (tr) openCredit(tr.dataset.cn); };
 function cnRows(all) {
   const by = {}; CRLINES.forEach(l => (by[l.credit_no] = by[l.credit_no] || []).push(l)); const rows = [], nos = [];
   CREDITS.filter(c => all || !c.exported_at).forEach(c => { const ls = (by[c.credit_no] || []).sort((a, b) => a.line_no - b.line_no); if (!ls.length) return; nos.push(c.credit_no);
