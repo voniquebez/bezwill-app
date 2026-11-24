@@ -1149,7 +1149,7 @@ $('iUndo').onclick = async () => { const r = await sb.rpc('mark_exported', { p_n
 const CN_HEAD = ['*CreditMemoNo', '*Customer', '*CreditMemoDate', 'Location', 'Memo', 'Item(Product/Service)', 'ItemDescription', 'ItemQuantity', 'ItemRate', '*ItemAmount', '*ItemTaxCode', 'ItemTaxAmount', 'Service Date'];
 let LASTCN = [];
 const cnTotals = () => { const t = {}; CRLINES.forEach(l => t[l.credit_no] = (t[l.credit_no] || 0) + Number(l.amount) + Number(l.tax_amount)); return t; };
-const nextCnNo = () => 'CN' + String(Number(setting('NextCreditNo', '1')) || 1).padStart(5, '0');
+const nextCnNo = () => 'C' + String(Number(setting('NextCreditNo', '1')) || 1).padStart(5, '0');
 function drawCredits() {
   if (!$('cnBody')) return; const tt = cnTotals(), n = CREDITS.filter(c => !c.exported_at).length;
   $('cnNew').style.display = CANCREDIT ? '' : 'none';
