@@ -320,7 +320,7 @@ function ordPanel(o, sur) {
   if (kind === 'sur') { const have = {}; sur.forEach(x => { if (x && x.code) have[x.code] = x.desc || ''; });
     h = '<b>Surcharges</b> <span class="hint">tick the ones that apply, add a description if you like, then Apply (the typed waybill / parcels / weight / client are saved too)</span>' + surOptions().map(p => '<div style="display:flex;gap:8px;align-items:center;margin:4px 0"><label style="display:flex;gap:8px;align-items:center;margin:0;min-width:240px"><input type="checkbox" class="ps_sur" data-code="' + esc(p.product_code) + '"' + (p.product_code in have ? ' checked' : '') + '> ' + esc(p.name) + '</label><input type="text" class="ps_surd" data-code="' + esc(p.product_code) + '" placeholder="description (optional)" value="' + esc(have[p.product_code] || '') + '" style="flex:1;max-width:340px;padding:5px 8px;border:1px solid var(--line);border-radius:8px"></div>').join('') + btns(sur.length);
   } else h = '<b>Volumetric</b> <span class="hint">enter the sizes in cm; the weight is worked out from them (rounded up to a whole kg)</span><div style="display:flex;gap:8px;margin:6px 0"><input type="text" class="ps_l" placeholder="Length cm" value="' + esc(o.length_cm == null ? '' : o.length_cm) + '" inputmode="decimal" style="width:100px"><input type="text" class="ps_w" placeholder="Width cm" value="' + esc(o.width_cm == null ? '' : o.width_cm) + '" inputmode="decimal" style="width:100px"><input type="text" class="ps_h" placeholder="Height cm" value="' + esc(o.height_cm == null ? '' : o.height_cm) + '" inputmode="decimal" style="width:100px"></div>' + btns(o.volumetric);
-  return '<tr id="opan_' + id + '"><td colspan="' + cols + '"><div class="omsg warn" style="margin:0 0 6px">' + h + '</div></td></tr>';
+  return '<tr id="opan_' + id + '"><td colspan="' + cols + '"><div class="omsg warn" style="margin:0 0 6px;border:2px solid #f59e0b;font-size:15px">' + h + '</div></td></tr>';
 }
 function ordRow(o) {
   const closed = o.status === 'Invoiced' || o.status === 'Cancelled', id = esc(o.order_id), sur = Array.isArray(o.surcharges) ? o.surcharges : [], edit = canEdit();
@@ -389,7 +389,7 @@ function ordAct(e) {
   const t = e.target, b = t.closest && t.closest('[data-act]'); if (t.classList && t.classList.contains('osel')) { if (t.checked) OSEL[t.dataset.id] = 1; else delete OSEL[t.dataset.id]; const n = Object.keys(OSEL).length; $('selcount').textContent = n; $('selinv').disabled = !n; $('selcancel').disabled = !n; const r = $('orow_' + t.dataset.id); if (r) r.style.background = t.checked ? '#fff3e0' : ''; return true; }
   if (!b) return !!(t.closest && t.closest('input,select,textarea,label,button')); const a = b.dataset.act, id = b.dataset.id;
   if (a === 'tab') { OF.tab = b.dataset.t; drawOrders(); } else if (a === 'save') ordInline(id); else if (a === 'edit') editOrder(id); else if (a === 'rev') ordReverse(id); else if (a === 'inv') openInvoiceFor([id]);
-  else if (a === 'vol' || a === 'sur') { if (OPANEL[id] === a) delete OPANEL[id]; else OPANEL[id] = a; drawOrders(); }
+  else if (a === 'vol' || a === 'sur') { if (OPANEL[id] === a) { delete OPANEL[id]; drawOrders(); } else { OPANEL[id] = a; drawOrders(); omsg('warn', a === 'sur' ? 'Choose which surcharge(s) apply in the yellow box under the order, then press Apply.' : 'Enter the length, width and height in the yellow box under the order, then press Apply.'); const pr = $('opan_' + id); if (pr && pr.scrollIntoView) pr.scrollIntoView({ block: 'center', behavior: 'smooth' }); } }
   else if (a === 'panclose') { delete OPANEL[id]; drawOrders(); }
   else if (a === 'panclear') { ordInline(id, OPANEL[id] === 'sur' ? { surcharges: [] } : { volumetric: false }); }
   else if (a === 'panapply') { const pr = $('opan_' + id), kind = OPANEL[id]; if (!pr) return true;
@@ -423,13 +423,15 @@ $('cq').oninput = drawCustomers; $('cact').onchange = drawCustomers;
 
 function closeDrawer() { WBCTX = null; $('drawer').classList.add('hide'); $('drawer').style.width = ''; }
 function dl(pairs) { return '<dl>' + pairs.filter(p => p[1] !== '' && p[1] != null).map(p => '<dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd>').join('') + '</dl>'; }
+function orderPairs(o) {
+  const sur = Array.isArray(o.surcharges) ? o.surcharges.map(s => typeof s === 'string' ? s : (s.desc ? (PRODUCTS.find(p => p.product_code === s.code) || { name: s.code }).name + ' (' + s.desc + ')' : (PRODUCTS.find(p => p.product_code === s.code) || { name: s.code || JSON.stringify(s) }).name)).join(', ') : '';
+  return [['Received', fmtDT(o.received)], ['Customer', custName(o.customer_id)], ['Who pays', o.who_pays], ['Waybill', o.waybill], ['Collection', o.collection], ['Delivery', o.delivery], ['Collection date', fmtD(o.collection_date)], ['Driver', o.driver], ['Source', o.source], ['Weight (kg)', o.weight_kg], ['Parcels', o.parcels], ['Volumetric', o.volumetric ? ('Yes: ' + [o.length_cm, o.width_cm, o.height_cm].join(' x ') + ' cm') : (o.length_cm ? 'Measured: ' + [o.length_cm, o.width_cm, o.height_cm].join(' x ') + ' cm' : '')], ['Surcharges', sur], ['Same day', o.same_day ? 'Yes' : ''], ['Cash', o.cash_paid ? 'Paid cash' : ''], ['Cash price', o.cash_price], ['Extra discount %', o.extra_discount], ['Invoice', o.invoice_no], ['Notes', o.notes], ['Map link', o.maps_link], ['Last changed', fmtDT(o.updated_at) + (o.updated_by ? ' by ' + o.updated_by : '')]];
+}
 $('oTable').onclick = e => {
   if (ordAct(e)) return;
   const tr = e.target.closest('tr[data-o]'); if (!tr) return;
   const o = ORDERS.find(x => x.order_id === tr.dataset.o); if (!o) return;
-  const sur = Array.isArray(o.surcharges) ? o.surcharges.map(s => typeof s === 'string' ? s : JSON.stringify(s)).join(', ') : '';
-  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button> ' + (canEdit() && o.status !== 'Invoiced' ? '<button class="btn" onclick="editOrder(\'' + esc(o.order_id) + '\')">Edit</button>' : '') + '<h3 style="margin-top:12px">Order ' + esc(o.order_id) + '</h3><span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span>' +
-    dl([['Received', fmtDT(o.received)], ['Customer', custName(o.customer_id)], ['Who pays', o.who_pays], ['Waybill', o.waybill], ['Collection', o.collection], ['Delivery', o.delivery], ['Collection date', fmtD(o.collection_date)], ['Driver', o.driver], ['Source', o.source], ['Weight (kg)', o.weight_kg], ['Parcels', o.parcels], ['Volumetric', o.volumetric ? ('Yes: ' + [o.length_cm, o.width_cm, o.height_cm].join(' x ') + ' cm') : ''], ['Surcharges', sur], ['Same day', o.same_day ? 'Yes' : ''], ['Cash', o.cash_paid ? 'Paid cash' : ''], ['Cash price', o.cash_price], ['Extra discount %', o.extra_discount], ['Invoice', o.invoice_no], ['Notes', o.notes], ['Map link', o.maps_link], ['Last changed', fmtDT(o.updated_at) + (o.updated_by ? ' by ' + o.updated_by : '')]]);
+  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button> ' + (canEdit() && o.status !== 'Invoiced' ? '<button class="btn" onclick="editOrder(\'' + esc(o.order_id) + '\')">Edit</button>' : '') + '<h3 style="margin-top:12px">Order ' + esc(o.order_id) + '</h3><span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span>' + dl(orderPairs(o));
   dupSection(o);
   $('drawer').classList.remove('hide');
 };
@@ -602,14 +604,17 @@ function openWaybill(start, n) {
   const b = BOOKS.find(x => x.book_start === start), w = WBS.find(x => x.waybill === n); if (!b || !w) return;
   const o = ORDERS.find(x => x.waybill === n && x.status !== 'Cancelled');
   const state = w.status === 'Invoiced' ? 'Invoiced' : w.status === 'Cancelled' ? 'Cancelled' : (w.billing_month === CURMONTH ? 'Open' : 'Carried over');
-  const row = (k, v) => v == null || v === '' ? '' : '<tr><td class="mute" style="padding:4px 12px 4px 0">' + k + '</td><td><b>' + esc(v) + '</b></td></tr>';
   const inv = w.invoice_no ? INVOICES.find(i => i.invoice_no === w.invoice_no) : null;
-  let t = row('Status', state) + row('Invoice', w.invoice_no) + (inv ? row('Invoice date', inv.invoice_date) : '') + row('Client', custName(w.customer_id) || (o ? custName(o.customer_id) : '')) + (w.cash_paid ? row('Paid', 'Cash') : '') + row('Billing month', w.billing_month);
-  if (o) t += row('Order', o.order_id + ' (' + o.status + ')') + row('Collection', o.collection) + row('Delivery', o.delivery) + row('Driver', o.driver) + row('Parcels', o.parcels) + row('Weight kg', o.weight_kg) + row('Cash price', o.cash_price) + row('Notes', o.notes);
+  const wpairs = [['Waybill book', b.book_start + ' - ' + b.book_end + (b.holder ? ' (out with ' + b.holder + ')' : ' (at the office)')], ['Waybill status', state], ['Billing month', w.billing_month], ['Client on waybill', custName(w.customer_id)], ['Paid cash', w.cash_paid ? 'Yes' : ''], ['Invoice', w.invoice_no], ['Invoice date', inv ? inv.invoice_date : ''], ['Invoice due', inv ? inv.due_date : ''], ['Invoice terms', inv ? inv.terms : '']];
+  Object.keys(w).forEach(k => { if (/cancel|credit|reason|note/i.test(k) && w[k]) wpairs.push([k.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase()), w[k]]); });
+  const lines = INVLINES.filter(l => l.invoice_no === w.invoice_no && w.invoice_no && String(l.description || '').indexOf('WB' + n) === 0);
+  const lt = lines.length ? '<h4 style="margin:16px 0 6px">Invoice lines for this waybill</h4><div style="overflow-x:auto"><table style="font-size:13px"><thead><tr><th>Item</th><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th><th>VAT</th></tr></thead><tbody>' + lines.map(l => '<tr><td>' + esc(l.item) + '</td><td>' + esc(l.description) + '</td><td>' + esc(l.quantity) + '</td><td>' + esc(l.rate) + '</td><td>' + esc(l.amount) + '</td><td>' + esc(l.tax_amount) + '</td></tr>').join('') + '</tbody></table></div><div class="mute" style="margin-top:4px">Total for this waybill: R' + lines.reduce((a, l) => a + Number(l.amount) + Number(l.tax_amount), 0).toFixed(2) + ' incl VAT</div>' : '';
   const open = state === 'Open' || state === 'Carried over', canOrd = canEdit() && open && (!o || (o.status !== 'Invoiced' && o.status !== 'Cancelled'));
-  $('drawer').style.width = 'min(560px,100%)';
-  $('drawer').innerHTML = '<button class="btn ghost" id="wd_back">&larr; Back to book ' + b.book_start + '</button><h3 style="margin-top:12px">Waybill ' + n + '</h3><table>' + t + '</table>' +
-    (canOrd ? '<div class="row" style="margin-top:14px"><button class="btn" id="wd_edit">' + (o ? 'Edit this order' : 'Add info (new order)') + '</button></div>' : (o && o.status === 'Invoiced' ? '<p class="mute">Already invoiced, so it cannot be changed here.</p>' : (!o && !open ? '' : '')));
+  $('drawer').style.width = 'min(640px,100%)';
+  $('drawer').innerHTML = '<button class="btn ghost" id="wd_back">&larr; Back to book ' + b.book_start + '</button> ' + (canOrd ? '<button class="btn" id="wd_edit">' + (o ? 'Edit this order' : 'Add info (new order)') + '</button>' : '') +
+    '<h3 style="margin-top:12px">Waybill ' + n + '</h3><span class="pill ' + esc(o ? o.status : state) + '">' + esc(state) + '</span>' + dl(wpairs) +
+    (o ? '<h4 style="margin:16px 0 0">Order ' + esc(o.order_id) + ' <span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span></h4>' + dl(orderPairs(o)) : '<p class="mute" style="margin-top:12px">No order or details captured for this waybill yet.</p>') + lt +
+    (o && o.status === 'Invoiced' ? '<p class="mute">Already invoiced, so it cannot be changed here.</p>' : '');
   $('wd_back').onclick = () => openBook(start);
   if (canOrd) $('wd_edit').onclick = () => { WBCTX = start; if (o) orderForm(o); else orderForm(null, { waybill: n, driver: b.holder || '' }); };
   $('drawer').classList.remove('hide');
