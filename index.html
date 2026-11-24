@@ -131,6 +131,9 @@
       <div class="bar"><button class="btn" id="iDl">Download QuickBooks file (not yet downloaded)</button><button class="btn ghost" id="iDlAll">Download all</button><button class="btn ghost" id="iUndo" style="display:none">Undo last download</button><span class="mute" id="iDlInfo"></span></div>
       <div class="bar"><input type="text" id="iq" placeholder="Search invoices: number, customer, waybill..."><span class="count" id="icount"></span></div>
       <div class="card"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody id="invBody"></tbody></table></div>
+      <h3>Credit notes <button class="btn" id="cnNew" style="margin-left:10px">+ New credit note</button></h3>
+      <div class="bar"><button class="btn" id="cnDl">Download credit notes file (not yet downloaded)</button><button class="btn ghost" id="cnDlAll">Download all</button><button class="btn ghost" id="cnUndo" style="display:none">Undo last download</button><span class="mute" id="cnInfo"></span></div>
+      <div class="card"><table><thead><tr><th>Credit note</th><th>Customer</th><th>Date</th><th>Invoice</th><th>Waybill</th><th>Total</th><th>Reason</th><th>Status</th></tr></thead><tbody id="cnBody"></tbody></table></div>
     </section>
     <section id="cashView" class="hide">
       <div id="cGate"></div>
@@ -193,7 +196,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let TOASTT = null;
 function toast(kind, text) { try { const t = document.getElementById('toast'); if (!t) return; t.className = 'show ' + kind; t.textContent = (kind === 'ok' ? '\u2713 ' : '\u26A0 ') + text; clearTimeout(TOASTT); TOASTT = setTimeout(() => { t.className = ''; }, kind === 'ok' ? Math.min(2200 + text.length * 25, 6000) : 6000); } catch (e) { } }
 const NOTOAST = { my_role: 1, can_add_clients: 1, preview_gaps: 1, pricing_gate_ok: 1, next_invoice_no: 1, cur_month: 1, auto_advance: 1 };
-const TOASTTXT = { save_order: 'Order saved', set_holder: 'Book holder saved', save_book_note: 'Notes saved', create_invoice: 'Invoice created', mark_exported: 'Invoice file downloaded and locked', void_invoice: 'Invoice voided', add_books: 'Books added', cancel_waybills: 'Waybills cancelled', uncancel_waybills: 'Waybills un-cancelled', move_waybills: 'Waybills moved', carry_book: 'Book carried over', add_credit: 'Credit note saved', record_cash_round: 'Cash round recorded', apply_cash_round: 'Cash round applied', set_cash_prices: 'Cash prices saved', import_orders: 'Orders imported', merge_customers: 'Customers merged', merge_orders: 'Orders merged', dismiss_duplicate: 'Saved', cancel_orders: 'Orders cancelled', save_rule: 'Rule saved', save_driver: 'Driver saved', save_price_list: 'Price list saved', apply_fuel_update: 'Fuel update applied', annual_update: 'Annual update applied' };
+const TOASTTXT = { save_order: 'Order saved', set_holder: 'Book holder saved', save_book_note: 'Notes saved', create_invoice: 'Invoice created', mark_exported: 'Invoice file downloaded and locked', create_credit_note: 'Credit note created', mark_credits_exported: 'Credit notes file downloaded and locked', void_invoice: 'Invoice voided', add_books: 'Books added', cancel_waybills: 'Waybills cancelled', uncancel_waybills: 'Waybills un-cancelled', move_waybills: 'Waybills moved', carry_book: 'Book carried over', add_credit: 'Credit note saved', record_cash_round: 'Cash round recorded', apply_cash_round: 'Cash round applied', set_cash_prices: 'Cash prices saved', import_orders: 'Orders imported', merge_customers: 'Customers merged', merge_orders: 'Orders merged', dismiss_duplicate: 'Saved', cancel_orders: 'Orders cancelled', save_rule: 'Rule saved', save_driver: 'Driver saved', save_price_list: 'Price list saved', apply_fuel_update: 'Fuel update applied', annual_update: 'Annual update applied' };
 try { const _rpc = sb.rpc.bind(sb); sb.rpc = async function (fn, a) { let r; try { r = await _rpc(fn, a); } catch (e) { if (!NOTOAST[fn]) toast('err', 'NOT saved: ' + (e.message || e)); throw e; } if (!NOTOAST[fn]) { if (r && r.error) toast('err', 'NOT saved: ' + r.error.message); else toast('ok', TOASTTXT[fn] || 'Saved'); } return r; }; } catch (e) { }
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -226,6 +229,7 @@ async function start() {
     const role = await sb.rpc('my_role');
     ROLE = role.data || null;
     try { const pr = await sb.from('profiles').select('can_add_clients').eq('user_id', data.session.user.id).limit(1); CANADD = !!(pr.data && pr.data[0] && pr.data[0].can_add_clients); } catch (e) { CANADD = false; }
+    try { const pc = await sb.from('profiles').select('can_credit').eq('user_id', data.session.user.id).limit(1); CANCREDIT = !!(pc.data && pc.data[0] && pc.data[0].can_credit); } catch (e) { CANCREDIT = false; }
     show('app');
     if (role.error || !role.data) {
       $('noRole').textContent = 'You are signed in, but this login has no access yet. Ask the admin to set up your profile.';
@@ -234,7 +238,7 @@ async function start() {
     $('noRole').classList.add('hide');
     $('oTable').innerHTML = '<div class="msg">Loading orders...</div>';
     let SET, AL;
-    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET, PERIODS, PRICING, RULES, INVOICES, INVLINES, CASHR] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false })]);
+    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET, PERIODS, PRICING, RULES, INVOICES, INVLINES, CASHR, CREDITS, CRLINES] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false }), fetchAll('credit_notes', { col: 'created_at', asc: true }).catch(() => []), fetchAll('credit_note_lines', { col: 'id', asc: true }).catch(() => [])]);
     SETTINGS = SET;
     ALIASES = {}; AL.forEach(a => ALIASES[a.place] = a.customer_id); CURMONTH = (SET.find(x => x.key === 'CurrentMonth') || {}).value || '';
     $('bnew').classList.toggle('hide', !canEdit());
@@ -467,7 +471,7 @@ $('cbody').onclick = e => {
 };
 
 const canEdit = () => ROLE === 'admin' || ROLE === 'office';
-let CANADD = false;
+let CANADD = false, CANCREDIT = false, CREDITS = [], CRLINES = [];
 const canAddClients = () => canEdit() && CANADD;
 function nextCustId() {
   let max = 0; CUSTS.forEach(c => { const m = /^C(\d+)$/.exec(c.customer_id); if (m) max = Math.max(max, Number(m[1])); });
@@ -628,17 +632,18 @@ function openWaybill(start, n) {
   const o = ORDERS.find(x => x.waybill === n && x.status !== 'Cancelled');
   const state = w.status === 'Invoiced' ? 'Invoiced' : w.status === 'Cancelled' ? 'Cancelled' : (w.billing_month === CURMONTH ? 'Open' : 'Carried over');
   const inv = w.invoice_no ? INVOICES.find(i => i.invoice_no === w.invoice_no) : null;
-  const wpairs = [['Waybill book', b.book_start + ' - ' + b.book_end + (b.holder ? ' (out with ' + b.holder + ')' : ' (at the office)')], ['Waybill status', state], ['Billing month', w.billing_month], ['Client on waybill', custName(w.customer_id)], ['Paid cash', w.cash_paid ? 'Yes' : ''], ['Invoice', w.invoice_no], ['Invoice date', inv ? inv.invoice_date : ''], ['Invoice due', inv ? inv.due_date : ''], ['Invoice terms', inv ? inv.terms : '']];
+  const wpairs = [['Waybill book', b.book_start + ' - ' + b.book_end + (b.holder ? ' (out with ' + b.holder + ')' : ' (at the office)')], ['Waybill status', state], ['Billing month', w.billing_month], ['Client on waybill', custName(w.customer_id)], ['Paid cash', w.cash_paid ? 'Yes' : ''], ['Invoice', w.invoice_no], ['Invoice date', inv ? inv.invoice_date : ''], ['Invoice due', inv ? inv.due_date : ''], ['Invoice terms', inv ? inv.terms : ''], ['Credit notes', CREDITS.filter(c => c.waybill === n).map(c => c.credit_no + ' (invoice ' + c.invoice_no + ', ' + c.reason + ')').join('; ')]];
   Object.keys(w).forEach(k => { if (/cancel|credit|reason|note/i.test(k) && w[k]) wpairs.push([k.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase()), w[k]]); });
   const lines = INVLINES.filter(l => l.invoice_no === w.invoice_no && w.invoice_no && String(l.description || '').indexOf('WB' + n) === 0);
   const lt = lines.length ? '<h4 style="margin:16px 0 6px">Invoice lines for this waybill</h4><div style="overflow-x:auto"><table style="font-size:13px"><thead><tr><th>Item</th><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th><th>VAT</th></tr></thead><tbody>' + lines.map(l => '<tr><td>' + esc(l.item) + '</td><td>' + esc(l.description) + '</td><td>' + esc(l.quantity) + '</td><td>' + esc(l.rate) + '</td><td>' + esc(l.amount) + '</td><td>' + esc(l.tax_amount) + '</td></tr>').join('') + '</tbody></table></div><div class="mute" style="margin-top:4px">Total for this waybill: R' + lines.reduce((a, l) => a + Number(l.amount) + Number(l.tax_amount), 0).toFixed(2) + ' incl VAT</div>' : '';
   const open = state === 'Open' || state === 'Carried over', canOrd = canEdit() && open && (!o || (o.status !== 'Invoiced' && o.status !== 'Cancelled'));
   $('drawer').style.width = 'min(640px,100%)';
-  $('drawer').innerHTML = '<button class="btn ghost" id="wd_back">&larr; Back to book ' + b.book_start + '</button> ' + (canOrd ? '<button class="btn" id="wd_edit">' + (o ? 'Edit this order' : 'Add info (new order)') + '</button>' : '') +
+  $('drawer').innerHTML = '<button class="btn ghost" id="wd_back">&larr; Back to book ' + b.book_start + '</button> ' + (canOrd ? '<button class="btn" id="wd_edit">' + (o ? 'Edit this order' : 'Add info (new order)') + '</button>' : '') + (CANCREDIT && state === 'Invoiced' ? ' <button class="btn ghost" id="wd_credit">Credit this waybill</button>' : '') +
     '<h3 style="margin-top:12px">Waybill ' + n + '</h3><span class="pill ' + esc(o ? o.status : state) + '">' + esc(state) + '</span>' + dl(wpairs) +
     (o ? '<h4 style="margin:16px 0 0">Order ' + esc(o.order_id) + ' <span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span></h4>' + dl(orderPairs(o)) : '<p class="mute" style="margin-top:12px">No order or details captured for this waybill yet.</p>') + lt +
     (o && o.status === 'Invoiced' ? '<p class="mute">Already invoiced, so it cannot be changed here.</p>' : '');
   $('wd_back').onclick = () => openBook(start);
+  if ($('wd_credit')) $('wd_credit').onclick = () => creditForm(String(n));
   if (canOrd) $('wd_edit').onclick = () => { WBCTX = start; if (o) orderForm(o); else orderForm(null, { waybill: n, driver: b.holder || '' }); };
   $('drawer').classList.remove('hide');
 }
@@ -654,7 +659,7 @@ function wbActions(start) {
   $('w_uncancel').onclick = () => { const n = wbSel('Cancelled'); if (!need(n, 'cancelled')) return; ask('<label for="w_why">Reason (optional)</label><input type="text" id="w_why">', () => run('uncancel_waybills', { p_nums: n, p_reason: $('w_why').value }, d => d + ' waybill(s) open again.')); };
   $('w_next').onclick = () => { const n = wbSel('Open'); if (!need(n, 'open')) return; run('move_waybills', { p_nums: n, p_dir: 'next' }, d => d + ' waybill(s) carried to next month.'); };
   $('w_back').onclick = () => { const n = wbSel('Carried over'); if (!need(n, 'carried over')) return; run('move_waybills', { p_nums: n, p_dir: 'back' }, d => d + ' waybill(s) brought back to this month.'); };
-  $('w_credit').onclick = () => { const n = wbSel('Invoiced'); if (n.length !== 1) { err('Tick exactly one invoiced waybill for a credit note.'); return; } ask('<label for="w_cn">Credit note number for ' + n[0] + '</label><input type="text" id="w_cn"><label for="w_ni">New invoice number (if one was issued)</label><input type="text" id="w_ni">', () => run('add_credit', { p_waybill: n[0], p_credit_note: $('w_cn').value, p_new_invoice: $('w_ni').value || null }, () => 'Credit note saved.')); };
+  $('w_credit').onclick = () => { const n = wbSel('Invoiced'); if (n.length !== 1) { err('Tick exactly one invoiced waybill for a credit note.'); return; } if (!CANCREDIT) { err('Only the people allowed to issue credit notes can do this.'); return; } creditForm(String(n[0])); };
   $('w_book').onclick = () => ask('<label><input type="checkbox" id="w_ok"> Carry every open waybill in this book to next month (invoiced ones stay)</label>', () => { if (!$('w_ok').checked) { err('Tick the box first.'); return; } run('carry_book', { p_start: start }, d => d + ' waybill(s) carried to next month.'); });
 }
 $('bnew').onclick = () => {
@@ -1072,12 +1077,12 @@ function invTotals() { const t = {}; INVLINES.forEach(l => t[l.invoice_no] = (t[
 function drawInvList() {
   const tt = invTotals(), q = $('iq').value.trim().toLowerCase(), heads = INVOICES.slice().reverse().filter(h => !q || [h.invoice_no, h.customer, h.memo].join(' ').toLowerCase().includes(q));
   const n = INVOICES.filter(h => !h.void && !h.exported_at).length; $('iDl').textContent = 'Download QuickBooks file (' + n + ' not yet downloaded)'; $('iDl').disabled = !n;
-  $('icount').textContent = heads.length + ' of ' + INVOICES.length;
+  $('icount').textContent = heads.length + ' of ' + INVOICES.length; drawCredits();
   $('invBody').innerHTML = heads.slice(0, 300).map(h => '<tr><td>' + esc(h.invoice_no) + '</td><td>' + esc(h.customer) + '<div class="mute" style="font-size:12px">' + esc(h.memo) + '</div></td><td>' + esc(dmy_(String(h.invoice_date).slice(0, 10))) + '</td><td>R' + r2(tt[h.invoice_no] || 0).toFixed(2) + '</td><td>' + (h.void ? '<span class="pill Cancelled">Void</span>' : h.exported_at ? '<span class="pill Invoiced">Downloaded</span>' : '<span class="pill Weighed">To download</span>') + '</td><td>' + (canEdit() && !h.void && !h.exported_at ? '<button class="tab iv" data-n="' + esc(h.invoice_no) + '">Void</button>' : '') + '</td></tr>').join('') || '<tr><td colspan="6" class="msg">No invoices.</td></tr>';
 }
 $('iUpTo').onchange = drawInvoicing; $('iq').oninput = drawInvList;
 async function reloadInvoicing() {
-  [ORDERS, WBS, INVOICES, INVLINES, SETTINGS, BOOKS, CASHR] = await Promise.all([fetchAll('orders', { col: 'received', asc: false }), fetchAll('waybills', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('settings', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false })]);
+  [ORDERS, WBS, INVOICES, INVLINES, SETTINGS, BOOKS, CASHR, CREDITS, CRLINES] = await Promise.all([fetchAll('orders', { col: 'received', asc: false }), fetchAll('waybills', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('settings', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false }), fetchAll('credit_notes', { col: 'created_at', asc: true }).catch(() => []), fetchAll('credit_note_lines', { col: 'id', asc: true }).catch(() => [])]);
   CURMONTH = (SETTINGS.find(x => x.key === 'CurrentMonth') || {}).value || CURMONTH; drawOrders(); drawShelf(); drawInvoicing(); drawCash();
 }
 function invPayload(g) {
@@ -1139,6 +1144,68 @@ async function downloadQbo(all) {
 }
 $('iDl').onclick = () => downloadQbo(false); $('iDlAll').onclick = () => downloadQbo(true);
 $('iUndo').onclick = async () => { const r = await sb.rpc('mark_exported', { p_nos: LASTDL, p_on: false }); if (r.error) { $('iDlInfo').textContent = r.error.message; return; } $('iUndo').style.display = 'none'; await reloadInvoicing(); $('iDlInfo').textContent = 'Put back to "to download": ' + LASTDL.join(', '); };
+
+// ---- credit notes ----
+const CN_HEAD = ['*CreditMemoNo', '*Customer', '*CreditMemoDate', 'Location', 'Memo', 'Item(Product/Service)', 'ItemDescription', 'ItemQuantity', 'ItemRate', '*ItemAmount', '*ItemTaxCode', 'ItemTaxAmount', 'Service Date'];
+let LASTCN = [];
+const cnTotals = () => { const t = {}; CRLINES.forEach(l => t[l.credit_no] = (t[l.credit_no] || 0) + Number(l.amount) + Number(l.tax_amount)); return t; };
+const nextCnNo = () => 'CN' + String(Number(setting('NextCreditNo', '1')) || 1).padStart(5, '0');
+function drawCredits() {
+  if (!$('cnBody')) return; const tt = cnTotals(), n = CREDITS.filter(c => !c.exported_at).length;
+  $('cnNew').style.display = CANCREDIT ? '' : 'none';
+  $('cnDl').textContent = 'Download credit notes file (' + n + ' not yet downloaded)'; $('cnDl').disabled = !n;
+  $('cnBody').innerHTML = CREDITS.slice().reverse().map(c => '<tr><td><b>' + esc(c.credit_no) + '</b></td><td>' + esc(c.customer) + '</td><td>' + esc(dmy_(String(c.credit_date).slice(0, 10))) + '</td><td>' + esc(c.invoice_no) + '</td><td>' + esc(c.waybill) + '</td><td>R' + r2(tt[c.credit_no] || 0).toFixed(2) + '</td><td>' + esc(c.reason) + '</td><td>' + (c.exported_at ? '<span class="pill Invoiced">Downloaded</span>' : '<span class="pill Weighed">Not yet downloaded</span>') + '</td></tr>').join('') || '<tr><td colspan="8" class="msg">No credit notes yet.</td></tr>';
+}
+function cnRows(all) {
+  const by = {}; CRLINES.forEach(l => (by[l.credit_no] = by[l.credit_no] || []).push(l)); const rows = [], nos = [];
+  CREDITS.filter(c => all || !c.exported_at).forEach(c => { const ls = (by[c.credit_no] || []).sort((a, b) => a.line_no - b.line_no); if (!ls.length) return; nos.push(c.credit_no);
+    ls.forEach((l, i) => rows.push([c.credit_no, i ? '' : c.customer, i ? '' : dmy_(String(c.credit_date).slice(0, 10)), '', i ? '' : (c.memo || ''), l.item, l.description || '', l.quantity == null ? '' : String(Number(l.quantity)), Number(l.rate).toFixed(2), Number(l.amount).toFixed(2), l.tax_code, Number(l.tax_amount).toFixed(2), l.service_date ? dmy_(String(l.service_date).slice(0, 10)) : ''])); });
+  return { rows, nos };
+}
+async function downloadCn(all) {
+  const x = cnRows(all); if (!x.rows.length) { $('cnInfo').textContent = 'Nothing to download.'; return; }
+  const csv = [CN_HEAD].concat(x.rows).map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n', name = 'bezwill_credit_notes_' + todayJ() + '_' + x.nos[0] + (x.nos.length > 1 ? '-' + x.nos[x.nos.length - 1] : '') + '.csv';
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); a.download = name; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  if (all) { $('cnInfo').textContent = x.nos.length + ' credit note(s) downloaded (' + name + '). Nothing was marked.'; return; }
+  const r = await sb.rpc('mark_credits_exported', { p_nos: x.nos, p_on: true }); if (r.error) { $('cnInfo').textContent = 'Downloaded, but could not mark as downloaded: ' + r.error.message; return; }
+  LASTCN = x.nos; $('cnUndo').style.display = ''; await reloadInvoicing(); $('cnInfo').textContent = x.nos.length + ' credit note(s) downloaded (' + name + ') and locked.';
+}
+$('cnDl').onclick = () => downloadCn(false); $('cnDlAll').onclick = () => downloadCn(true);
+$('cnUndo').onclick = async () => { const r = await sb.rpc('mark_credits_exported', { p_nos: LASTCN, p_on: false }); if (r.error) { $('cnInfo').textContent = r.error.message; return; } $('cnUndo').style.display = 'none'; await reloadInvoicing(); $('cnInfo').textContent = 'Put back to "to download": ' + LASTCN.join(', '); };
+$('cnNew').onclick = () => creditForm('');
+function creditInfo(n) {
+  const w = WBS.find(x => x.waybill === n); if (!w) return { err: 'Waybill ' + n + ' does not exist.' };
+  if (w.status !== 'Invoiced' || !w.invoice_no) return { err: 'Waybill ' + n + ' is not on an invoice (' + w.status + '), so there is nothing to credit.' };
+  const h = INVOICES.find(i => i.invoice_no === w.invoice_no); if (!h || h.void) return { err: 'The invoice for waybill ' + n + ' could not be found.' };
+  const done = CREDITS.filter(c => c.invoice_no === h.invoice_no && c.waybill === n); if (done.length) return { err: 'Waybill ' + n + ' was already credited on invoice ' + h.invoice_no + ' (' + done.map(c => c.credit_no).join(', ') + ').' };
+  const ls = INVLINES.filter(l => l.invoice_no === h.invoice_no && (l.description === 'WB' + n || String(l.description || '').indexOf('WB' + n + ' ') === 0)).sort((a, b) => a.line_no - b.line_no);
+  if (!ls.length) return { err: 'Could not find the invoice lines for waybill ' + n + ' on invoice ' + h.invoice_no + '.' };
+  return { w, h, ls };
+}
+function creditForm(n) {
+  if (!CANCREDIT) { toast('err', 'Only the people allowed to issue credit notes can do this.'); return; }
+  n = String(n || '').trim(); const info = n ? creditInfo(Number(n)) : null, d = $('drawer');
+  let h = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">New credit note</h3><p class="mute">A credit note is for one waybill on an invoice. It takes that waybill off at the same prices, gets the next number (<b>' + esc(nextCnNo()) + '</b>), and goes in the credit notes file, not the invoice file. The waybill and its order become open again so you can fix and invoice them.</p>' +
+    '<div class="frm"><label for="cr_wb">Waybill number</label><div style="display:flex;gap:8px"><input type="text" id="cr_wb" inputmode="numeric" value="' + esc(n) + '"><button class="btn" id="cr_look">Look up</button></div></div><div id="cr_err" class="err" style="margin:8px 0">' + (info && info.err ? esc(info.err) : '') + '</div>';
+  if (info && !info.err) {
+    const sub = info.ls.reduce((a, l) => a + Number(l.amount), 0), tax = info.ls.reduce((a, l) => a + Number(l.tax_amount), 0);
+    h += dl([['Invoice', info.h.invoice_no], ['Client', info.h.customer], ['Invoice date', dmy_(String(info.h.invoice_date).slice(0, 10))], ['Sent to QuickBooks', info.h.exported_at ? 'Yes (downloaded)' : 'Not yet downloaded']]) +
+      '<h4 style="margin:12px 0 6px">Lines that will be credited</h4><div style="overflow-x:auto"><table style="font-size:13px"><thead><tr><th>Item</th><th>Description</th><th>Amount</th><th>VAT</th></tr></thead><tbody>' + info.ls.map(l => '<tr><td>' + esc(l.item) + '</td><td>' + esc(l.description) + '</td><td>' + Number(l.amount).toFixed(2) + '</td><td>' + Number(l.tax_amount).toFixed(2) + '</td></tr>').join('') + '</tbody></table></div><p style="font-size:18px;margin:8px 0"><b>Credit total: R' + (sub + tax).toFixed(2) + ' incl VAT</b></p>' +
+      '<div class="frm"><label for="cr_why">Reason (required)</label><input type="text" id="cr_why" placeholder="e.g. Waybill typed incorrectly"><label for="cr_dt">Credit note date</label><input type="date" id="cr_dt" value="' + todayJ() + '"><div class="chk"><label><input type="checkbox" id="cr_ok"> Yes, credit waybill ' + esc(n) + ' on ' + esc(info.h.invoice_no) + '</label></div></div><div class="row"><button class="btn" id="cr_go">Create credit note</button></div>';
+  }
+  d.style.width = 'min(640px,100%)'; d.innerHTML = h; d.classList.remove('hide');
+  $('cr_look').onclick = () => creditForm($('cr_wb').value.replace(/\s+/g, ''));
+  $('cr_wb').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); creditForm($('cr_wb').value.replace(/\s+/g, '')); } };
+  if ($('cr_go')) $('cr_go').onclick = async () => {
+    if (!$('cr_ok').checked) { $('cr_err').textContent = 'Tick the box to confirm.'; return; } const why = $('cr_why').value.trim(); if (!why) { $('cr_err').textContent = 'Enter the reason.'; return; }
+    $('cr_go').disabled = true; $('cr_err').textContent = 'Saving...';
+    const r = await sb.rpc('create_credit_note', { p: { waybill: n, reason: why, credit_date: $('cr_dt').value } });
+    if (r.error) { $('cr_go').disabled = false; $('cr_err').textContent = r.error.message; return; }
+    await reloadInvoicing(); const x = r.data || {};
+    toast('ok', 'Credit note ' + x.credit_no + ' created: R' + Number(x.total).toFixed(2) + ' off invoice ' + x.invoice_no + '. Waybill ' + n + ' is open again.');
+    d.innerHTML = '<button class="btn" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Credit note ' + esc(x.credit_no) + ' created</h3><div class="omsg ok">R' + Number(x.total).toFixed(2) + ' credited on invoice ' + esc(x.invoice_no) + ' for waybill ' + esc(n) + '. The waybill and its order are open again: fix the waybill number or details, then invoice them as normal. The credit note is in the credit notes file under the Invoicing tab.</div>';
+  };
+}
 
 function hash_(str) { var h = 5381; for (var i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0; return h.toString(16); }
 function driverFromFile_(name) { return String(name || '').replace(/^.*[\\\/]/, '').replace(/\.txt$/i, '').replace(/^WhatsApp Chat with\s+/i, '').replace(/\s*\(\d+\)\s*$/, '').trim(); }
