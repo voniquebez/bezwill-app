@@ -203,6 +203,8 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp
 let ORDERS = [], CUSTS = [], CBY = {}, TERMS = [], DRIVERS = [], ROLE = null, ALIASES = {}, PRODUCTS = [], BOOKS = [], WBS = [], CURMONTH = '', SHELF = 'on', PERIODS = [], PRICING = [], RULES = [], SETTINGS = [], INVOICES = [], INVLINES = [], CASHR = [];
 
 /* read every row, 1000 at a time (Supabase hands out at most 1000 per request) */
+let CRERR = '';
+const crFetch = (t, o) => fetchAll(t, o).then(r => { CRERR = ''; return r; }).catch(e => { CRERR = (e && e.message) || String(e); return []; });
 async function fetchAll(table, order) {
   let all = [], from = 0;
   for (;;) {
@@ -238,7 +240,7 @@ async function start() {
     $('noRole').classList.add('hide');
     $('oTable').innerHTML = '<div class="msg">Loading orders...</div>';
     let SET, AL;
-    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET, PERIODS, PRICING, RULES, INVOICES, INVLINES, CASHR, CREDITS, CRLINES] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false }), fetchAll('credit_notes', { col: 'created_at', asc: true }).catch(() => []), fetchAll('credit_note_lines', { col: 'id', asc: true }).catch(() => [])]);
+    [CUSTS, ORDERS, TERMS, DRIVERS, AL, PRODUCTS, BOOKS, WBS, SET, PERIODS, PRICING, RULES, INVOICES, INVLINES, CASHR, CREDITS, CRLINES] = await Promise.all([fetchAll('customers', { col: 'name', asc: true }), fetchAll('orders', { col: 'received', asc: false }), fetchAll('terms', null), fetchAll('drivers', null), fetchAll('place_aliases', null), fetchAll('products', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('waybills', null), fetchAll('settings', null), fetchAll('periods', null), fetchAll('pricing', null), fetchAll('rules', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false }), crFetch('credit_notes', { col: 'created_at', asc: true }), crFetch('credit_note_lines', { col: 'id', asc: true })]);
     SETTINGS = SET;
     ALIASES = {}; AL.forEach(a => ALIASES[a.place] = a.customer_id); CURMONTH = (SET.find(x => x.key === 'CurrentMonth') || {}).value || '';
     $('bnew').classList.toggle('hide', !canEdit());
@@ -642,6 +644,9 @@ function openWaybill(start, n) {
     '<h3 style="margin-top:12px">Waybill ' + n + '</h3><span class="pill ' + esc(o ? o.status : state) + '">' + esc(state) + '</span>' + dl(wpairs) +
     (o ? '<h4 style="margin:16px 0 0">Order ' + esc(o.order_id) + ' <span class="pill ' + esc(o.status) + '">' + esc(o.status) + '</span></h4>' + dl(orderPairs(o)) : '<p class="mute" style="margin-top:12px">No order or details captured for this waybill yet.</p>') + lt +
     (o && o.status === 'Invoiced' ? '<p class="mute">Already invoiced, so it cannot be changed here.</p>' : '');
+  (async () => { let ev = []; try { const r = await sb.from('waybill_ledger').select('*').eq('waybill', n).order('id', { ascending: true }); ev = r.data || []; } catch (e) { }
+    if (!$('wd_back') || !$('drawer').innerHTML.includes('Waybill ' + n + '</h3>')) return;
+    $('drawer').insertAdjacentHTML('beforeend', '<h4 style="margin:16px 0 6px">History</h4>' + (ev.length ? '<table style="font-size:13px"><thead><tr><th>When</th><th>What</th><th>Source</th><th>Note</th></tr></thead><tbody>' + ev.map(e => '<tr><td>' + esc(fmtDT(e.happened_at)) + '</td><td>' + esc([e.ref, e.credit_note ? 'credit ' + e.credit_note : '', e.new_invoice ? 'new ' + e.new_invoice : ''].filter(Boolean).join(' / ')) + '</td><td>' + esc(e.source) + '</td><td>' + esc(e.note) + '</td></tr>').join('') + '</tbody></table>' : '<p class="mute">Nothing recorded yet.</p>')); })();
   $('wd_back').onclick = () => openBook(start);
   if ($('wd_credit')) $('wd_credit').onclick = () => creditForm(String(n));
   if (canOrd) $('wd_edit').onclick = () => { WBCTX = start; if (o) orderForm(o); else orderForm(null, { waybill: n, driver: b.holder || '' }); };
@@ -1082,7 +1087,7 @@ function drawInvList() {
 }
 $('iUpTo').onchange = drawInvoicing; $('iq').oninput = drawInvList;
 async function reloadInvoicing() {
-  [ORDERS, WBS, INVOICES, INVLINES, SETTINGS, BOOKS, CASHR, CREDITS, CRLINES] = await Promise.all([fetchAll('orders', { col: 'received', asc: false }), fetchAll('waybills', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('settings', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false }), fetchAll('credit_notes', { col: 'created_at', asc: true }).catch(() => []), fetchAll('credit_note_lines', { col: 'id', asc: true }).catch(() => [])]);
+  [ORDERS, WBS, INVOICES, INVLINES, SETTINGS, BOOKS, CASHR, CREDITS, CRLINES] = await Promise.all([fetchAll('orders', { col: 'received', asc: false }), fetchAll('waybills', null), fetchAll('invoices', { col: 'created_at', asc: true }), fetchAll('invoice_lines', { col: 'id', asc: true }), fetchAll('settings', null), fetchAll('books', { col: 'book_start', asc: true }), fetchAll('cash_rounds', { col: 'recorded_at', asc: false }), crFetch('credit_notes', { col: 'created_at', asc: true }), crFetch('credit_note_lines', { col: 'id', asc: true })]);
   CURMONTH = (SETTINGS.find(x => x.key === 'CurrentMonth') || {}).value || CURMONTH; drawOrders(); drawShelf(); drawInvoicing(); drawCash();
 }
 function invPayload(g) {
@@ -1154,6 +1159,7 @@ function drawCredits() {
   if (!$('cnBody')) return; const tt = cnTotals(), n = CREDITS.filter(c => !c.exported_at).length;
   $('cnNew').style.display = CANCREDIT ? '' : 'none';
   $('cnDl').textContent = 'Download credit notes file (' + n + ' not yet downloaded)'; $('cnDl').disabled = !n;
+  if (CRERR) { $('cnBody').innerHTML = '<tr><td colspan="8" class="err">Could not load the credit notes: ' + esc(CRERR) + '. Credit notes that were created are safe in the database.</td></tr>'; return; }
   $('cnBody').innerHTML = CREDITS.slice().reverse().map(c => '<tr><td><b>' + esc(c.credit_no) + '</b></td><td>' + esc(c.customer) + '</td><td>' + esc(dmy_(String(c.credit_date).slice(0, 10))) + '</td><td>' + esc(c.invoice_no) + '</td><td>' + esc(c.waybill) + '</td><td>R' + r2(tt[c.credit_no] || 0).toFixed(2) + '</td><td>' + esc(c.reason) + '</td><td>' + (c.exported_at ? '<span class="pill Invoiced">Downloaded</span>' : '<span class="pill Weighed">Not yet downloaded</span>') + '</td></tr>').join('') || '<tr><td colspan="8" class="msg">No credit notes yet.</td></tr>';
 }
 function cnRows(all) {
@@ -1355,15 +1361,11 @@ $('bneed').onclick = () => {
     '<div class="card" style="margin-top:10px;max-height:55vh"><table><thead><tr><th>Book</th><th>Open</th><th>Waybills</th></tr></thead><tbody>' + Object.keys(by).map(Number).sort((a, b) => a - b).map(k => '<tr><td>' + k + '</td><td>' + by[k].length + '</td><td>' + esc(compress_(by[k])) + '</td></tr>').join('') + '</tbody></table></div>';
   $('drawer').classList.remove('hide');
 };
-$('bfind').onclick = async () => {
-  const n = parseInt($('bfq').value, 10), w = WBS.find(x => x.waybill === n); if (!w) { alert('Waybill ' + ($('bfq').value || '?') + ' is not in any of your books.'); return; }
-  const r = await sb.from('waybill_ledger').select('*').eq('waybill', n).order('id', { ascending: true }), ev = r.data || [], o = ORDERS.find(x => x.waybill === n && x.status !== 'Cancelled');
-  $('drawer').style.width = 'min(640px,100%)';
-  $('drawer').innerHTML = '<button class="btn ghost" onclick="closeDrawer()">Close</button><h3 style="margin-top:12px">Waybill ' + n + '</h3><span class="pill ' + esc(w.status) + '">' + esc(w.status) + '</span> <span class="mute">book ' + w.book_start + ' &middot; ' + esc(w.billing_month) + '</span>' +
-    dl([['Invoice', w.invoice_no], ['Customer', custName(w.customer_id)], ['Cash', w.cash_paid ? 'Yes' : ''], ['Note', w.note], ['Order', o ? o.order_id + ' ' + (o.delivery || '') : '']]) + '<h4>History</h4>' +
-    (ev.length ? '<table><thead><tr><th>When</th><th>What</th><th>Source</th><th>Note</th></tr></thead><tbody>' + ev.map(e => '<tr><td>' + esc(fmtDT(e.happened_at)) + '</td><td>' + esc([e.ref, e.credit_note ? 'credit ' + e.credit_note : '', e.new_invoice ? 'new ' + e.new_invoice : ''].filter(Boolean).join(' / ')) + '</td><td>' + esc(e.source) + '</td><td>' + esc(e.note) + '</td></tr>').join('') + '</tbody></table>' : '<p class="mute">Nothing recorded yet.</p>');
-  $('drawer').classList.remove('hide');
+$('bfind').onclick = () => {
+  const n = parseInt($('bfq').value, 10), w = WBS.find(x => x.waybill === n); if (!w) { toast('err', 'Waybill ' + ($('bfq').value || '?') + ' is not in any of your books.'); return; }
+  openWaybill(w.book_start, n);
 };
+$('bfq').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('bfind').click(); } };
 start();
 </script>
 </body>
