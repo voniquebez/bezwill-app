@@ -545,6 +545,7 @@ function orderForm(o, pre) {
     '<div class="chk"><label><input type="checkbox" id="o_nc"' + (o.non_collection ? ' checked' : '') + '> Non-collection (driver was sent but could not collect - billed at the standard 5 kg price)</label></div>' +
     '<div class="chk"><label><input type="checkbox" id="o_vol"' + (o.volumetric ? ' checked' : '') + '> Volumetric (weight worked out from the sizes, rounded up to a whole kg)</label></div>' +
     '<div style="display:flex;gap:8px"><div style="flex:1">' + f('o_l', 'Length (cm)', o.length_cm) + '</div><div style="flex:1">' + f('o_w', 'Width (cm)', o.width_cm) + '</div><div style="flex:1">' + f('o_h', 'Height (cm)', o.height_cm) + '</div></div>' +
+    '<div id="o_volres" class="mute" style="margin:6px 0 4px"></div>' +
     '<label for="o_cd">Collection date (defaults to the day the order was received)</label><input type="date" id="o_cd" value="' + esc(fmtD(o.collection_date) || (isNew ? todayJ() : (o.received ? odate(o) : ''))) + '">' +
     '<div class="chk"><label><input type="checkbox" id="o_sd"' + (o.same_day ? ' checked' : '') + '> Same day</label></div>' +
     (sur ? '<label>Surcharges</label>' + sur : '') +
@@ -559,6 +560,13 @@ function orderForm(o, pre) {
     const id = guessCust(place); if (id) { $('o_cust').value = CBY[id].name; $('o_guess').textContent = 'Guessed from the place name. Please check it.'; } else if (!$('o_cust').value) $('o_guess').textContent = '';
   };
   ['o_col', 'o_del'].forEach(k => $(k).oninput = tryGuess); $('o_who').onchange = tryGuess; $('o_cust').oninput = () => { auto = false; $('o_guess').textContent = ''; };
+  const volRes = () => {
+    const n = k => Number(String($(k).value).replace(',', '.')), l = n('o_l'), w = n('o_w'), h = n('o_h'), box = $('o_volres');
+    if (!(l > 0 && w > 0 && h > 0)) { box.innerHTML = ''; return; }
+    const div = volDiv_(), raw = Math.round(l * w * h / div * 100) / 100, kg = Math.ceil(raw - 1e-9);
+    box.innerHTML = '<b style="color:#0f172a">Volumetric weight = ' + kg + ' kg</b>' + (raw !== kg ? ' <span class="hint">(' + raw + ' rounded up)</span>' : '') + ' <span class="hint">' + l + ' &times; ' + w + ' &times; ' + h + ' &divide; ' + div + '</span><br><span class="hint">' + ($('o_vol').checked ? 'Volumetric is ticked: this is the weight that gets invoiced.' : 'Volumetric is not ticked: the sizes are saved but the weight above is invoiced.') + '</span>';
+  };
+  ['o_l', 'o_w', 'o_h'].forEach(k => $(k).oninput = volRes); $('o_vol').onchange = volRes; volRes();
   $('drawer').classList.remove('hide');
 }
 function editOrder(id) {
