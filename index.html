@@ -154,6 +154,7 @@
     <section id="booksView">
       <div class="bar">
         <button class="tab on" id="shBtnOn">In circulation</button>
+        <button class="tab" id="shBtnNext">Next month</button>
         <button class="tab" id="shBtnArch">Archived books</button>
         <span class="sp"></span>
         <button class="btn" id="bnew">+ Add new books</button><button class="btn ghost" id="bneed">Still to invoice</button><input type="text" id="bfq" placeholder="Waybill number" size="12" inputmode="numeric"><button class="btn ghost" id="bfind">Look up</button>
@@ -606,14 +607,17 @@ function bookStats() {
     if (w.status === 'Invoiced') a.invoiced++; else if (w.status === 'Cancelled') a.cancelled++; else if (w.billing_month === CURMONTH) { a.open++; if (om[w.waybill]) a.onOrder++; } else a.carried++; });
   return by;
 }
-function setShelf(v) { SHELF = v; $('shBtnOn').classList.toggle('on', v === 'on'); $('shBtnArch').classList.toggle('on', v === 'arch'); drawShelf(); }
-$('shBtnOn').onclick = () => setShelf('on'); $('shBtnArch').onclick = () => setShelf('arch');
+function setShelf(v) { SHELF = v; $('shBtnOn').classList.toggle('on', v === 'on'); $('shBtnNext').classList.toggle('on', v === 'next'); $('shBtnArch').classList.toggle('on', v === 'arch'); drawShelf(); }
+$('shBtnOn').onclick = () => setShelf('on'); $('shBtnNext').onclick = () => setShelf('next'); $('shBtnArch').onclick = () => setShelf('arch');
 function drawShelf() {
   const st = bookStats(), zero = { open: 0, invoiced: 0, cancelled: 0, carried: 0, onOrder: 0 };
   const done = b => { const a = st[b.book_start] || zero; return a.open === 0 && a.carried === 0 && a.invoiced + a.cancelled > 0; };
-  const nOn = BOOKS.filter(b => !done(b)).length, nArch = BOOKS.length - nOn;
+  const nxt = b => { const a = st[b.book_start] || zero; return !done(b) && a.open === 0 && a.carried > 0; }, where = b => done(b) ? 'arch' : nxt(b) ? 'next' : 'on';
+  const nOn = BOOKS.filter(b => where(b) === 'on').length, nNext = BOOKS.filter(b => where(b) === 'next').length, nArch = BOOKS.filter(b => where(b) === 'arch').length;
+  const nm = (() => { const m = /^(\d{4})-(\d{2})$/.exec(CURMONTH || ''); if (!m) return 'Next month'; const d = new Date(Number(m[1]), Number(m[2]), 1); return d.toLocaleString('en-ZA', { month: 'long', year: 'numeric' }); })();
+  $('shBtnNext').textContent = nm + ' (' + nNext + ')'; $('shBtnNext').title = 'Books where every waybill has been carried over to next month';
   $('shBtnOn').textContent = 'In circulation (' + nOn + ')'; $('shBtnArch').textContent = 'Archived books (' + nArch + ')';
-  const list = BOOKS.filter(b => (SHELF === 'arch') === done(b)).sort((x, y) => Number(x.book_start) - Number(y.book_start));
+  const list = BOOKS.filter(b => where(b) === SHELF).sort((x, y) => Number(x.book_start) - Number(y.book_start));
   $('monthPill').textContent = 'Invoicing month: ' + CURMONTH;
   $('shelf').innerHTML = list.length ? list.map(b => { const a = st[b.book_start] || zero, cls = done(b) ? 'done' : (b.holder ? 'out' : 'office');
     return '<div class="book ' + cls + '" data-b="' + b.book_start + '"><div class="plate"><div class="t">Waybills</div><div class="r">' + b.book_start + ' &ndash; ' + b.book_end + '</div></div><div class="where">' + (b.holder ? 'Out with ' + esc(b.holder) + (b.date_out ? '<small>since ' + esc(fmtD(b.date_out)) + '</small>' : '') : (done(b) ? 'Finished' : 'At the office')) + '</div><div class="counts"><span>' + a.open + ' open</span><span>' + a.invoiced + ' invoiced</span><span>' + a.cancelled + ' cancelled</span>' + (a.carried ? '<span>' + a.carried + ' carried</span>' : '') + '</div></div>'; }).join('') : '<div class="msg">No books here.</div>';
