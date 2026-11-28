@@ -553,7 +553,7 @@ function orderForm(o, pre) {
     '<label for="o_cd">Collection date (defaults to the day the order was received)</label><input type="date" id="o_cd" value="' + esc(fmtD(o.collection_date) || (isNew ? todayJ() : (o.received ? odate(o) : ''))) + '">' +
     '<div class="chk"><label><input type="checkbox" id="o_sd"' + (o.same_day ? ' checked' : '') + '> Same day</label></div>' +
     (sur ? '<label>Surcharges</label>' + sur : '') +
-    '<div class="chk"><label><input type="checkbox" id="o_cash"' + (o.cash_paid ? ' checked' : '') + '> Customer paid cash</label></div>' + f('o_cp', 'Cash price (rand, including VAT)', o.cash_price) +
+    '<div class="chk"><label><input type="checkbox" id="o_cash"' + (o.cash_paid ? ' checked' : '') + '> Customer paid cash</label></div>' + f('o_cp', 'Cash price (rand, including VAT) - typing a price means the customer paid cash, and no weight is needed', o.cash_price) +
     f('o_xd', 'Extra discount % (100 = no charge)', o.extra_discount) + f('o_notes', 'Notes', o.notes, true) +
     '<div class="row"><button class="btn" id="o_save">Save</button>' + (isNew ? '' : '<button class="btn ghost" id="o_cancel" style="margin-left:auto;color:var(--bad)">Cancel this order</button>') + '</div><p id="o_err" class="err"></p></div>';
   $('o_save').onclick = () => saveOrder(isNew ? null : o.order_id, false);
@@ -570,6 +570,7 @@ function orderForm(o, pre) {
     const div = volDiv_(), raw = Math.round(l * w * h / div * 100) / 100, kg = Math.ceil(raw - 1e-9);
     box.innerHTML = '<b style="color:#0f172a">Volumetric weight = ' + kg + ' kg</b>' + (raw !== kg ? ' <span class="hint">(' + raw + ' rounded up)</span>' : '') + ' <span class="hint">' + l + ' &times; ' + w + ' &times; ' + h + ' &divide; ' + div + '</span><br><span class="hint">' + ($('o_vol').checked ? 'Volumetric is ticked: this is the weight that gets invoiced.' : 'Volumetric is not ticked: the sizes are saved but the weight above is invoiced.') + '</span>';
   };
+  $('o_cp').oninput = () => { if ($('o_cp').value.trim() !== '') $('o_cash').checked = true; };
   ['o_l', 'o_w', 'o_h'].forEach(k => $(k).oninput = volRes); $('o_vol').onchange = volRes; volRes();
   $('drawer').classList.remove('hide');
 }
@@ -584,7 +585,7 @@ $('onew').onclick = () => orderForm(null);
 async function saveOrder(id, cancel) {
   const v = k => $(k).value.trim(), err = m => { $('o_err').textContent = m; };
   const p = { collection: v('o_col'), delivery: v('o_del'), who_pays: v('o_who'), driver: v('o_drv'), waybill: v('o_wb'), weight_kg: v('o_kg'), parcels: v('o_pc'), collection_date: v('o_cd').replace(/\//g, '-'), same_day: $('o_sd').checked, notes: v('o_notes'),
-    volumetric: $('o_vol').checked, length_cm: v('o_l'), width_cm: v('o_w'), height_cm: v('o_h'), cash_paid: $('o_cash').checked, cash_price: v('o_cp'), extra_discount: v('o_xd'), surcharges: [] };
+    volumetric: $('o_vol').checked, length_cm: v('o_l'), width_cm: v('o_w'), height_cm: v('o_h'), cash_paid: $('o_cash').checked || v('o_cp') !== '', cash_price: v('o_cp'), extra_discount: v('o_xd'), surcharges: [] };
   document.querySelectorAll('.o_sur').forEach(cb => { if (cb.checked) { const d = document.querySelector('.o_surd[data-code="' + cb.dataset.code + '"]'); p.surcharges.push({ code: cb.dataset.code, desc: d ? d.value.trim() : '' }); } });
   const cn = v('o_cust').toLowerCase();
   if (cn) { const c = CUSTS.find(x => x.name.trim().toLowerCase() === cn); if (!c) return err('Pick the customer from the list (or add the customer on the Customers screen first).'); p.customer_id = c.customer_id; } else p.customer_id = '';
