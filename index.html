@@ -541,7 +541,7 @@ function orderForm(o, pre) {
     '<label for="o_who">Who pays</label><select id="o_who"><option value=""></option>' + ['Sender', 'Receiver'].map(x => '<option' + (x === o.who_pays ? ' selected' : '') + '>' + x + '</option>').join('') + '</select>' +
     '<label for="o_cust">Customer (pick from the list)</label><input type="text" id="o_cust" list="o_custlist" value="' + esc(cur) + '"><datalist id="o_custlist">' + act.map(c => '<option value="' + esc(c.name) + '">').join('') + '</datalist><div id="o_guess" class="mute" style="font-size:12px"></div>' +
     '<label for="o_drv">Driver</label><select id="o_drv"><option value=""></option>' + drv.map(d => '<option' + (d === o.driver ? ' selected' : '') + '>' + esc(d) + '</option>').join('') + '</select>' +
-    f('o_wb', 'Waybill number', o.waybill) + f('o_kg', 'Weight (kg)', o.weight_kg) + f('o_pc', 'Parcels', o.parcels) +
+    f('o_wb', 'Waybill number', o.waybill) + f('o_pc', 'Parcels', o.parcels) + f('o_kg', 'Weight (kg)', o.weight_kg) +
     '<div class="chk"><label><input type="checkbox" id="o_nc"' + (o.non_collection ? ' checked' : '') + '> Non-collection (driver was sent but could not collect - billed at the standard 5 kg price)</label></div>' +
     '<div class="chk"><label><input type="checkbox" id="o_vol"' + (o.volumetric ? ' checked' : '') + '> Volumetric (weight worked out from the sizes, rounded up to a whole kg)</label></div>' +
     '<div style="display:flex;gap:8px"><div style="flex:1">' + f('o_l', 'Length (cm)', o.length_cm) + '</div><div style="flex:1">' + f('o_w', 'Width (cm)', o.width_cm) + '</div><div style="flex:1">' + f('o_h', 'Height (cm)', o.height_cm) + '</div></div>' +
