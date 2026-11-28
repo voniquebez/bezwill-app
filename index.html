@@ -318,10 +318,13 @@ function ordBillCell(o) {
 }
 function dupBadge(o) {
   const d = DUPS[o.order_id]; if (!d || !d.length) return '';
-  return d.map(b => { const label = (b.waybill ? 'WB' + b.waybill : b.order_id) + ' (' + b.order_id + ', ' + b.status + (b.customer_id ? ', ' + custName(b.customer_id) : '') + ')', mine = o.waybill != null, theirs = b.waybill != null;
+  const items = d.map(b => { const when = dupDate_(b), label = (b.waybill ? 'WB' + b.waybill : b.order_id) + ' (' + b.order_id + ', ' + b.status + (b.customer_id ? ', ' + custName(b.customer_id) : '') + ')', mine = o.waybill != null, theirs = b.waybill != null;
     const btn = !mine ? '<button class="ob primary save" data-act="merge" data-keep="' + esc(b.order_id) + '" data-drop="' + esc(o.order_id) + '">Same order - merge into ' + (theirs ? 'WB' + b.waybill : esc(b.order_id)) + '</button>' : (!theirs && b.status !== 'Invoiced' ? '<button class="ob primary save" data-act="merge" data-keep="' + esc(o.order_id) + '" data-drop="' + esc(b.order_id) + '">Same order - merge ' + esc(b.order_id) + ' into this one</button>' : '');
-    return '<div class="omsg warn" style="margin:4px 0;padding:4px 8px"><b>&#9888; Possible duplicate of ' + esc(label) + '</b> <span class="hint">' + esc((b.collection || '?') + ' -> ' + (b.delivery || '?')) + '</span><div class="orow" style="margin:3px 0 0">' + btn + '<button class="ob ghost" data-act="notdup" data-a="' + esc(o.order_id) + '" data-b="' + esc(b.order_id) + '">Not a duplicate</button></div></div>'; }).join('');
+    return '<div class="omsg warn" style="margin:4px 0;padding:4px 8px"><b>&#9888; ' + esc(when) + ' &middot; ' + esc(label) + '</b> <span class="hint">' + esc((b.collection || '?') + ' -> ' + (b.delivery || '?')) + '</span><div class="orow" style="margin:3px 0 0">' + btn + '<button class="ob ghost" data-act="notdup" data-a="' + esc(o.order_id) + '" data-b="' + esc(b.order_id) + '">Not a duplicate</button></div></div>'; }).join('');
+  return '<details class="dupdd" style="margin:4px 0"' + (DUPOPEN[o.order_id] ? ' open' : '') + ' ontoggle="DUPOPEN[\'' + esc(o.order_id) + '\'] = this.open"><summary style="cursor:pointer;font-weight:700;color:#92400e;background:#fef3c7;border-radius:8px;padding:4px 8px">&#9888; ' + d.length + ' possible duplicate' + (d.length > 1 ? 's' : '') + ' (' + d.map(b => esc(dupDate_(b))).join(', ') + ')</summary>' + items + '</details>';
 }
+const DUPOPEN = {};
+const dupDate_ = b => odate(b) ? dmy_(odate(b)) : 'no date';
 function ordSnap() {
   document.querySelectorAll('#oTable tr[data-o]').forEach(tr => { const id = tr.dataset.o; if (ODROP[id]) return; const d = {};
     [['wb', 'ow_' + id], ['p', 'ow_' + id + '_p'], ['w', 'ow_' + id + '_w'], ['c', 'oc_' + id]].forEach(([k, eid]) => { const e = document.getElementById(eid); if (e && !e.disabled && e.value !== e.defaultValue) d[k] = e.value; });
