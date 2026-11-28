@@ -383,9 +383,13 @@ function drawOrders() {
   $('oTable').innerHTML = shown.length ? '<table><tr>' + (OSEL_ON ? '<th></th>' : '') + '<th>Received</th><th>Collection &rarr; Delivery</th><th>Bill to (client)</th><th>Waybill</th><th>Parcels</th><th>Weight kg</th><th></th><th>Invoice</th></tr>' + shown.map(ordRow).join('') + '</table>' + (list.length > shown.length ? '<div class="hint" style="padding:10px 0">Showing the newest ' + shown.length + ' of ' + list.length + '. Use the filters or search to narrow it down.</div>' : '') : '<div class="hint" style="padding:14px 0">Nothing here.</div>';
   ordRestore(); document.querySelectorAll('#oTable tr[id^="opan_"]').forEach(volPanelCalc);
 }
+async function freshOrder_(row) { // the database can adjust the status after saving (no charge, non-collection), so read the order back
+  try { const r = await sb.from('orders').select('*').eq('order_id', row.order_id).single(); if (r && r.data) return r.data; } catch (e) {}
+  return row;
+}
 async function ordSave(id, p, okText) {
   const r = await sb.rpc('save_order', { p: Object.assign({ order_id: id }, p) }); if (r.error) { omsg('err', r.error.message); return null; }
-  const saved = r.data; ORDERS = ORDERS.map(o => o.order_id === id ? saved : o);
+  const saved = await freshOrder_(r.data); ORDERS = ORDERS.map(o => o.order_id === id ? saved : o);
   if (saved.customer_id && saved.who_pays) { const pl = placeKey(saved.who_pays === 'Sender' ? saved.collection : saved.delivery); if (pl) ALIASES[pl] = saved.customer_id; }
   delete OSIDE[id]; delete OPANEL[id]; delete ODRAFT[id]; ODROP[id] = 1; drawOrders(); drawShelf(); drawInvoicing(); omsg('ok', okText || ('Saved ' + id + (saved.waybill ? ' (waybill ' + saved.waybill + ')' : '') + ': ' + ({ New: 'still needs a waybill', Assigned: 'waiting for weight / parcels / client', Weighed: 'ready to invoice' }[saved.status] || saved.status) + '.')); return saved;
 }
@@ -594,7 +598,7 @@ async function saveOrder(id, cancel) {
   const res = await sb.rpc('save_order', { p });
   $('o_save').disabled = false;
   if (res.error) return err(res.error.message);
-  let saved = res.data;
+  let saved = await freshOrder_(res.data);
   if ($('o_nc').checked !== !!saved.non_collection || $('o_nc').checked) { const r2 = await sb.rpc('set_non_collection', { p_order_id: saved.order_id, p_on: $('o_nc').checked }); if (r2.error) return err(r2.error.message); saved = r2.data; }
   if (id) ORDERS = ORDERS.map(o => o.order_id === id ? saved : o); else ORDERS.unshift(saved);
   if (saved.customer_id && saved.who_pays) { const pl = placeKey(saved.who_pays === 'Sender' ? saved.collection : saved.delivery); if (pl) ALIASES[pl] = saved.customer_id; }
